@@ -3,10 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: kiro-proxy
     restart: unless-stopped
-    ports:
-      - "8080:8080"
+    # No host port binding under Coolify: Traefik routes the FQDN to the
+    # container's internal port 8080 (see SERVICE_FQDN_KIRO_PROXY_8080).
+    expose:
+      - "8080"
     environment:
       DATA_DIR: ${DATA_DIR:-/app/state}
       LOG_LEVEL: ${LOG_LEVEL:-info}
