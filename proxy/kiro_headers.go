@@ -59,6 +59,13 @@ func applyKiroBaseHeaders(req *http.Request, account *config.Account, values kir
 	if account != nil && account.AccessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+account.AccessToken)
 	}
+	//! Enterprise external IdP (Microsoft Entra / Okta) accounts present an
+	//! IdP-issued bearer; the Kiro gateway only accepts it when this header tells
+	//! it the token is from an external IdP. Without it the gateway returns 403
+	//! "Invalid token".
+	if account != nil && account.AuthMethod == "external_idp" {
+		req.Header.Set("TokenType", "EXTERNAL_IDP")
+	}
 	req.Header.Set("User-Agent", values.UserAgent)
 	req.Header.Set("x-amz-user-agent", values.AmzUserAgent)
 	req.Header.Set("x-amzn-codewhisperer-optout", "true")

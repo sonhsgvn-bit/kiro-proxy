@@ -21,6 +21,7 @@
   let builderIdSession = '';
   let builderIdPollTimer = null;
   let iamSession = '';
+  let entraSession = '';
   let exportSelectedIds = new Set();
   let currentVersion = '';
   let testLogs = [];
@@ -876,6 +877,7 @@
     if (normalized === 'idc') return t('auth.enterprise');
     if (normalized === 'social') return t('auth.social');
     if (normalized === 'builderid') return 'BuilderID';
+    if (normalized === 'entra' || normalized === 'microsoft365') return 'Microsoft 365';
     if (normalized === 'github') return t('local.providerGithub');
     if (normalized === 'google') return t('local.providerGoogle');
     return method;
@@ -2373,7 +2375,8 @@
     sso: 'fa-solid fa-shield-halved',
     local: 'fa-solid fa-folder-open',
     credentials: 'fa-solid fa-code',
-    cookie: 'fa-solid fa-cookie-bite'
+    cookie: 'fa-solid fa-cookie-bite',
+    entra: 'fa-brands fa-microsoft'
   };
   function methodCard(type, title, desc) {
     var icon = METHOD_ICONS[type] || 'fa-solid fa-circle-plus';
@@ -2393,6 +2396,7 @@
     if (type === 'add') modalAdd(title, body);
     else if (type === 'builderid') modalBuilderId(title, body);
     else if (type === 'iam') modalIam(title, body);
+    else if (type === 'entra') modalEntra(title, body);
     else if (type === 'sso') modalSso(title, body);
     else if (type === 'local') modalLocal(title, body);
     else if (type === 'credentials') modalCredentials(title, body);
@@ -2403,6 +2407,7 @@
   function closeModal() {
     closeDialog('addModal');
     iamSession = '';
+    entraSession = '';
     if (builderIdPollTimer) { clearTimeout(builderIdPollTimer); builderIdPollTimer = null; }
     builderIdSession = '';
   }
@@ -2412,6 +2417,7 @@
       '<div class="method-list">' +
       methodCard('builderid', t('modal.builderIdTitle'), t('modal.builderIdDesc')) +
       methodCard('iam', t('modal.iamTitle'), t('modal.iamDesc')) +
+      methodCard('entra', t('modal.entraTitle'), t('modal.entraDesc')) +
       methodCard('sso', t('modal.ssoTitle'), t('modal.ssoDesc')) +
       methodCard('local', t('modal.localTitle'), t('modal.localDesc')) +
       methodCard('credentials', t('modal.credentialsTitle'), t('modal.credentialsDesc')) +
@@ -2466,6 +2472,37 @@
       '<button class="btn btn-primary" id="iamBtn" type="button">' + escapeHtml(t('builderid.startLogin')) + '</button>' +
       '</div>';
     $('iamBtn').addEventListener('click', startIamSso);
+  }
+  function modalEntra(title, body) {
+    title.textContent = t('modal.entraTitle');
+    body.innerHTML =
+      '<div class="help-block">' +
+      '<p><b>' + escapeHtml(t('entra.howToGet')) + '</b></p>' +
+      '<ol class="steps-list">' +
+      '<li>' + escapeHtml(t('entra.step1')) + '</li>' +
+      '<li>' + escapeHtml(t('entra.step2')) + ' <code>~/.aws/sso/cache/kiro-auth-token.json</code></li>' +
+      '<li>' + escapeHtml(t('entra.step3')) + '</li>' +
+      '</ol>' +
+      '</div>' +
+      '<div class="form-group">' +
+      '<label>' + escapeHtml(t('entra.tokenFile')) + '</label>' +
+      '<div class="input-row">' +
+      '<textarea id="entraTokenJson" placeholder="' + escapeAttr(t('local.pasteOrUpload')) + '" class="font-mono"></textarea>' +
+      '<label class="btn btn-outline btn-sm">' + escapeHtml(t('local.upload')) +
+      '<input type="file" accept=".json" id="entraTokenFile" class="file-input-hidden" />' +
+      '</label>' +
+      '</div>' +
+      '</div>' +
+      '<div class="form-group">' +
+      '<label>' + escapeHtml(t('entra.profileArn')) + ' <small>' + escapeHtml(t('entra.profileArnHint')) + '</small></label>' +
+      '<input type="text" id="entraProfileArn" class="font-mono" placeholder="arn:aws:codewhisperer:us-east-1:...:profile/..." />' +
+      '</div>' +
+      '<div class="modal-footer">' +
+      '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
+      '<button class="btn btn-primary" id="entraBtn" type="button">' + escapeHtml(t('common.add')) + '</button>' +
+      '</div>';
+    $('entraTokenFile').addEventListener('change', e => loadLocalFile(e.target, 'entraTokenJson'));
+    $('entraBtn').addEventListener('click', startEntraSso);
   }
   function modalSso(title, body) {
     title.textContent = t('modal.ssoTitle');
@@ -2771,6 +2808,29 @@
         });
       } else toastError(t('common.failed') + ': ' + localizedError(d.error));
     }
+  }
+  async function startEntraSso() {
+    const raw = $('entraTokenJson').value.trim();
+    if (!raw) return toastWarning(t('entra.tokenMissing'));
+    let data;
+    try { data = JSON.parse(raw); } catch (e) { return toastError(t('entra.invalidJson')); }
+    const payload = {
+      accessToken: data.accessToken || '',
+      refreshToken: data.refreshToken || '',
+      clientId: data.clientId || '',
+      tokenEndpoint: data.tokenEndpoint || '',
+      scopes: data.scopes || '',
+      expiresAt: data.expiresAt || '',
+      provider: data.provider || '',
+      profileArn: ($('entraProfileArn').value || '').trim()
+    };
+    const res = await api('/auth/external-idp', { method: 'POST', body: JSON.stringify(payload) });
+    const d = await res.json();
+    if (d.success) {
+      closeModal(); loadAccounts(); loadStats();
+      toastPrimary(t('cookie.importSuccess') + ': ' + (d.account?.email || d.account?.id));
+      autoRefreshNewAccount(d.account?.id);
+    } else toastError(t('common.failed') + ': ' + localizedError(d.error));
   }
   async function autoRefreshNewAccount(id) {
     if (!id) return;

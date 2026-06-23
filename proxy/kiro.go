@@ -47,6 +47,23 @@ var kiroEndpoints = []kiroEndpoint{
 	},
 }
 
+// ! Enterprise accounts that sign in through an external IdP (Microsoft Entra /
+// ! Okta) do NOT use the amazonaws.com endpoints. Their IdP-issued token is only
+// ! accepted by Kiro's own gateway, so route those accounts there instead.
+var kiroGatewayEndpoint = kiroEndpoint{
+	URL:       "https://runtime.us-east-1.kiro.dev/generateAssistantResponse",
+	Origin:    "AI_EDITOR",
+	AmzTarget: "",
+	Name:      "Kiro Gateway",
+}
+
+func endpointsForAccount(account *config.Account) []kiroEndpoint {
+	if account != nil && account.AuthMethod == "external_idp" {
+		return []kiroEndpoint{kiroGatewayEndpoint}
+	}
+	return getSortedEndpoints(config.GetPreferredEndpoint())
+}
+
 var kiroHttpStore atomic.Pointer[http.Client]
 var kiroRestHttpStore atomic.Pointer[http.Client]
 
@@ -308,7 +325,7 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		}
 	}
 
-	endpoints := getSortedEndpoints(config.GetPreferredEndpoint())
+	endpoints := endpointsForAccount(account)
 
 	var lastErr error
 	for _, ep := range endpoints {

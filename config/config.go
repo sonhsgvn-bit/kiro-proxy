@@ -28,17 +28,19 @@ type Account struct {
 	UserId   string `json:"userId,omitempty"`
 	Nickname string `json:"nickname,omitempty"`
 
-	AccessToken  string `json:"accessToken"`
-	RefreshToken string `json:"refreshToken"`
-	ClientID     string `json:"clientId,omitempty"`
-	ClientSecret string `json:"clientSecret,omitempty"`
-	AuthMethod   string `json:"authMethod"`
-	Provider     string `json:"provider,omitempty"`
-	Region       string `json:"region"`
-	StartUrl     string `json:"startUrl,omitempty"`
-	ExpiresAt    int64  `json:"expiresAt,omitempty"`
-	MachineId    string `json:"machineId,omitempty"`
-	ProfileArn   string `json:"profileArn,omitempty"`
+	AccessToken   string `json:"accessToken"`
+	RefreshToken  string `json:"refreshToken"`
+	ClientID      string `json:"clientId,omitempty"`
+	ClientSecret  string `json:"clientSecret,omitempty"`
+	AuthMethod    string `json:"authMethod"`
+	Provider      string `json:"provider,omitempty"`
+	Region        string `json:"region"`
+	StartUrl      string `json:"startUrl,omitempty"`
+	TokenEndpoint string `json:"tokenEndpoint,omitempty"`
+	Scopes        string `json:"scopes,omitempty"`
+	ExpiresAt     int64  `json:"expiresAt,omitempty"`
+	MachineId     string `json:"machineId,omitempty"`
+	ProfileArn    string `json:"profileArn,omitempty"`
 
 	ProxyURL string `json:"proxyURL,omitempty"`
 

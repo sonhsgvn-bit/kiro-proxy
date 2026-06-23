@@ -16,6 +16,15 @@ import (
 
 const kiroQAPIBase = "https://q.us-east-1.amazonaws.com"
 
+// qAPIBaseForAccount routes enterprise external IdP accounts to the Kiro gateway
+// instead of the amazonaws.com Q endpoint.
+func qAPIBaseForAccount(account *config.Account) string {
+	if account != nil && account.AuthMethod == "external_idp" {
+		return kiroGatewayMgmtBase
+	}
+	return kiroQAPIBase
+}
+
 type OverageSnapshot struct {
 	Status            string  `json:"status"`
 	Capability        string  `json:"capability"`
@@ -47,7 +56,7 @@ func FetchOverageStatus(account *config.Account) (*OverageSnapshot, error) {
 		return nil, fmt.Errorf("account is nil")
 	}
 
-	rawURL := kiroQAPIBase + "/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST&isEmailRequired=true"
+	rawURL := qAPIBaseForAccount(account) + "/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST&isEmailRequired=true"
 	if profileArn := strings.TrimSpace(account.ProfileArn); profileArn != "" {
 		rawURL += "&profileArn=" + neturl.QueryEscape(profileArn)
 	}
@@ -121,7 +130,7 @@ func SetOverageStatus(account *config.Account, enabled bool) (*OverageSnapshot, 
 	}
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequest("POST", kiroQAPIBase+"/setUserPreference", bytes.NewReader(body))
+	req, err := http.NewRequest("POST", qAPIBaseForAccount(account)+"/setUserPreference", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

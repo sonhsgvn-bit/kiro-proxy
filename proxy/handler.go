@@ -2231,6 +2231,8 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiStartIamSso(w, r)
 	case path == "/auth/iam-sso/complete" && r.Method == "POST":
 		h.apiCompleteIamSso(w, r)
+	case path == "/auth/external-idp" && r.Method == "POST":
+		h.apiImportExternalIdp(w, r)
 	case path == "/auth/builderid/start" && r.Method == "POST":
 		h.apiStartBuilderIdLogin(w, r)
 	case path == "/auth/builderid/poll" && r.Method == "POST":
@@ -2475,6 +2477,9 @@ func (h *Handler) apiUpdateAccount(w http.ResponseWriter, r *http.Request, id st
 	}
 	if v, ok := updates["proxyURL"].(string); ok {
 		existing.ProxyURL = v
+	}
+	if v, ok := updates["profileArn"].(string); ok {
+		existing.ProfileArn = strings.TrimSpace(v)
 	}
 	if v, ok := updates["silent"].(bool); ok {
 		existing.Silent = v
@@ -2790,6 +2795,101 @@ func (h *Handler) apiCompleteIamSso(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:    time.Now().Unix() + int64(expiresIn),
 		Enabled:      true,
 		MachineId:    config.GenerateMachineId(),
+	}
+
+	if err := config.AddAccount(account); err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	h.pool.Reload()
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"account": map[string]interface{}{
+			"id":    account.ID,
+			"email": account.Email,
+		},
+	})
+}
+
+func (h *Handler) apiImportExternalIdp(w http.ResponseWriter, r *http.Request) {
+	// Accepts the contents of the Kiro IDE token cache file
+	// (~/.aws/sso/cache/kiro-auth-token.json) for an external IdP account.
+	var req struct {
+		AccessToken   string `json:"accessToken"`
+		RefreshToken  string `json:"refreshToken"`
+		ClientID      string `json:"clientId"`
+		TokenEndpoint string `json:"tokenEndpoint"`
+		Scopes        string `json:"scopes"`
+		ExpiresAt     string `json:"expiresAt"`
+		Provider      string `json:"provider"`
+		ProfileArn    string `json:"profileArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	if req.RefreshToken == "" || req.TokenEndpoint == "" || req.ClientID == "" {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "refreshToken, tokenEndpoint and clientId are required"})
+		return
+	}
+
+	accessToken := req.AccessToken
+	expiresAt := auth.ParseExpiresAt(req.ExpiresAt)
+
+	// Refresh immediately if the access token is missing or already expired so
+	// the stored token is fresh.
+	if accessToken == "" || expiresAt == 0 || expiresAt <= time.Now().Unix() {
+		tmp := &config.Account{
+			AuthMethod:    "external_idp",
+			RefreshToken:  req.RefreshToken,
+			TokenEndpoint: req.TokenEndpoint,
+			ClientID:      req.ClientID,
+			Scopes:        req.Scopes,
+		}
+		at, rt, exp, _, err := auth.RefreshToken(tmp)
+		if err != nil {
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": "token refresh failed: " + err.Error()})
+			return
+		}
+		accessToken = at
+		if rt != "" {
+			req.RefreshToken = rt
+		}
+		expiresAt = exp
+	}
+
+	email, userID, _ := auth.GetUserInfo(accessToken)
+	if email == "" {
+		email = auth.EmailFromJWT(accessToken)
+	}
+
+	provider := req.Provider
+	if provider == "" || provider == "ExternalIdp" {
+		provider = "Microsoft365"
+	}
+
+	account := config.Account{
+		ID:            auth.GenerateAccountID(),
+		Email:         email,
+		UserId:        userID,
+		AccessToken:   accessToken,
+		RefreshToken:  req.RefreshToken,
+		ClientID:      req.ClientID,
+		TokenEndpoint: req.TokenEndpoint,
+		Scopes:        req.Scopes,
+		ProfileArn:    strings.TrimSpace(req.ProfileArn),
+		AuthMethod:    "external_idp",
+		Provider:      provider,
+		Region:        "us-east-1",
+		ExpiresAt:     expiresAt,
+		Enabled:       true,
+		MachineId:     config.GenerateMachineId(),
 	}
 
 	if err := config.AddAccount(account); err != nil {

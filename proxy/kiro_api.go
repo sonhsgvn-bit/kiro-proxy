@@ -15,10 +15,22 @@ import (
 
 const (
 	kiroRestAPIBase = "https://codewhisperer.us-east-1.amazonaws.com"
+	// kiroGatewayMgmtBase is the management gateway used by enterprise external
+	// IdP (Microsoft Entra / Okta) accounts. Their IdP token is only accepted
+	// here, not on the amazonaws.com endpoints.
+	kiroGatewayMgmtBase = "https://management.us-east-1.kiro.dev"
 )
 
+// managementBase returns the correct management/REST base URL for the account.
+func managementBase(account *config.Account) string {
+	if account != nil && account.AuthMethod == "external_idp" {
+		return kiroGatewayMgmtBase
+	}
+	return kiroRestAPIBase
+}
+
 func GetUsageLimits(account *config.Account) (*UsageLimitsResponse, error) {
-	url := fmt.Sprintf("%s/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST&isEmailRequired=true", kiroRestAPIBase)
+	url := fmt.Sprintf("%s/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST&isEmailRequired=true", managementBase(account))
 	url = withProfileArnQuery(url, account)
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -47,7 +59,7 @@ func GetUsageLimits(account *config.Account) (*UsageLimitsResponse, error) {
 }
 
 func GetUserInfo(account *config.Account) (*UserInfoResponse, error) {
-	url := fmt.Sprintf("%s/GetUserInfo", kiroRestAPIBase)
+	url := fmt.Sprintf("%s/GetUserInfo", managementBase(account))
 
 	payload := `{"origin":"KIRO_IDE"}`
 	req, err := http.NewRequest("POST", url, strings.NewReader(payload))
@@ -77,7 +89,7 @@ func GetUserInfo(account *config.Account) (*UserInfoResponse, error) {
 }
 
 func ListAvailableModels(account *config.Account) ([]ModelInfo, error) {
-	url := fmt.Sprintf("%s/ListAvailableModels?origin=AI_EDITOR&maxResults=50", kiroRestAPIBase)
+	url := fmt.Sprintf("%s/ListAvailableModels?origin=AI_EDITOR&maxResults=50", managementBase(account))
 	url = withProfileArnQuery(url, account)
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -175,7 +187,7 @@ func isTransientProfileFetchError(err error) bool {
 }
 
 func listAvailableProfiles(account *config.Account) (string, error) {
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/ListAvailableProfiles", kiroRestAPIBase), strings.NewReader(`{"maxResults":10}`))
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/ListAvailableProfiles", managementBase(account)), strings.NewReader(`{"maxResults":10}`))
 	if err != nil {
 		return "", err
 	}
