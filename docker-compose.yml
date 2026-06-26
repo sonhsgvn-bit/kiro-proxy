@@ -8,23 +8,36 @@ services:
     # container's internal port 8080 (see SERVICE_FQDN_KIRO_PROXY_8080).
     expose:
       - "8080"
-    # Enterprise SSO (Microsoft 365) callback. The hosted-portal sign-in redirects
-    # the browser to localhost:3128. To complete that login from a browser on the
-    # Docker host while the proxy runs in this container, uncomment the publish below
-    # AND set KIRO_SSO_CALLBACK_BIND=0.0.0.0. The callback is transient (closed at the
-    # ~10-minute deadline) and anti-CSRF state-matched, so only enable on a trusted
-    # network. Not needed when the admin panel is opened directly on the proxy host.
-    # ports:
-    #   - "3128:3128"
+    # Enterprise SSO (Microsoft 365) callback.
+    #
+    # The hosted-portal sign-in always redirects the browser to the fixed
+    # http://localhost:3128 (that redirect_uri is pre-registered by Kiro/Azure
+    # and cannot be changed to the Coolify domain). So the browser that finishes
+    # the Microsoft login must reach THIS container on localhost:3128.
+    #
+    # This publishes 3128 on the VPS loopback only (127.0.0.1) — never on the
+    # public interface — so the callback is not exposed to the internet. To run
+    # the login, open an SSH tunnel from your laptop:
+    #
+    #     ssh -L 3128:localhost:3128 user@<VPS-IP>
+    #
+    # then, with the tunnel open, use the admin panel (via the Coolify domain) ->
+    # Add account -> Microsoft 365 -> Start Login. The callback to localhost:3128
+    # travels laptop -> SSH -> VPS loopback -> container, and the token returns.
+    # Close the tunnel when done; refresh afterwards goes straight to Microsoft
+    # and no longer needs this port.
+    ports:
+      - "127.0.0.1:3128:3128"
     environment:
       DATA_DIR: ${DATA_DIR:-/app/state}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       ADMIN_PASSWORD: ${SERVICE_PASSWORD_KIRO_PROXY:-${ADMIN_PASSWORD:-changeme}}
       SERVICE_FQDN_KIRO_PROXY_8080: /
-      # Bind host for the Enterprise SSO callback listener. Unset (default) is
-      # loopback-only (127.0.0.1/::1). Set to 0.0.0.0 so the published 3128 port
-      # above can reach it from the host browser.
-      KIRO_SSO_CALLBACK_BIND: ${KIRO_SSO_CALLBACK_BIND:-}
+      # Traffic published from the VPS loopback reaches the container over the
+      # Docker bridge (not the container's own loopback), so the SSO callback
+      # listener must bind 0.0.0.0 to receive it. The port itself is only
+      # published on 127.0.0.1 above, so it stays off the public network.
+      KIRO_SSO_CALLBACK_BIND: ${KIRO_SSO_CALLBACK_BIND:-0.0.0.0}
     volumes:
       - kiro-proxy-state:/app/state
     healthcheck:
