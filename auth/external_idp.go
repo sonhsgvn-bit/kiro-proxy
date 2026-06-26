@@ -48,37 +48,62 @@ func refreshExternalIdpToken(refreshToken, tokenEndpoint, clientID, scopes strin
 		form.Set("scope", scopes)
 	}
 
-	req, _ := http.NewRequest("POST", tokenEndpoint, strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := client.Do(req)
+	accessToken, newRefresh, expiresIn, err := postExternalIdpToken(client, tokenEndpoint, form)
 	if err != nil {
-		return "", "", 0, "", err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return "", "", 0, "", fmt.Errorf("refresh failed: %d %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var result struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int    `json:"expires_in"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
 		return "", "", 0, "", err
 	}
 
 	// The IdP may not return a new refresh token on every call; keep the old one.
-	newRefresh := result.RefreshToken
 	if newRefresh == "" {
 		newRefresh = refreshToken
 	}
 
-	expiresAt := time.Now().Unix() + int64(result.ExpiresIn)
-	return result.AccessToken, newRefresh, expiresAt, "", nil
+	expiresAt := time.Now().Unix() + int64(expiresIn)
+	return accessToken, newRefresh, expiresAt, "", nil
+}
+
+// postExternalIdpToken performs a form-encoded POST to an external-IdP token
+// endpoint and maps the snake_case OAuth2 token response onto the standard
+// return shape. Shared by the authorization-code exchange (login, see
+// kiro_sso.go) and the refresh_token grant (renewal).
+func postExternalIdpToken(client *http.Client, tokenEndpoint string, form url.Values) (accessToken, refreshToken string, expiresIn int, err error) {
+	if strings.TrimSpace(tokenEndpoint) == "" {
+		return "", "", 0, fmt.Errorf("external IdP token endpoint is empty")
+	}
+
+	req, err := http.NewRequest("POST", tokenEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", "", 0, fmt.Errorf("failed to build external IdP token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("external IdP token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("failed to read external IdP token response: %w", err)
+	}
+
+	var out struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Error        string `json:"error"`
+		ErrorDesc    string `json:"error_description"`
+	}
+	_ = json.Unmarshal(body, &out)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || out.AccessToken == "" {
+		if out.Error != "" {
+			return "", "", 0, fmt.Errorf("external IdP token exchange failed (status %d): %s: %s", resp.StatusCode, out.Error, out.ErrorDesc)
+		}
+		return "", "", 0, fmt.Errorf("external IdP token exchange failed (status %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return out.AccessToken, out.RefreshToken, out.ExpiresIn, nil
 }
 
 // EmailFromJWT best-effort extracts an email/UPN claim from a JWT access or id

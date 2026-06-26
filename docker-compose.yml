@@ -8,11 +8,23 @@ services:
     # container's internal port 8080 (see SERVICE_FQDN_KIRO_PROXY_8080).
     expose:
       - "8080"
+    # Enterprise SSO (Microsoft 365) callback. The hosted-portal sign-in redirects
+    # the browser to localhost:3128. To complete that login from a browser on the
+    # Docker host while the proxy runs in this container, uncomment the publish below
+    # AND set KIRO_SSO_CALLBACK_BIND=0.0.0.0. The callback is transient (closed at the
+    # ~10-minute deadline) and anti-CSRF state-matched, so only enable on a trusted
+    # network. Not needed when the admin panel is opened directly on the proxy host.
+    # ports:
+    #   - "3128:3128"
     environment:
       DATA_DIR: ${DATA_DIR:-/app/state}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       ADMIN_PASSWORD: ${SERVICE_PASSWORD_KIRO_PROXY:-${ADMIN_PASSWORD:-changeme}}
       SERVICE_FQDN_KIRO_PROXY_8080: /
+      # Bind host for the Enterprise SSO callback listener. Unset (default) is
+      # loopback-only (127.0.0.1/::1). Set to 0.0.0.0 so the published 3128 port
+      # above can reach it from the host browser.
+      KIRO_SSO_CALLBACK_BIND: ${KIRO_SSO_CALLBACK_BIND:-}
     volumes:
       - kiro-proxy-state:/app/state
     healthcheck:
