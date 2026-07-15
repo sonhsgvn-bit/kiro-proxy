@@ -161,6 +161,29 @@ func TestUpdateSettingsPatchCanExplicitlyDisableAPIKeyRequirement(t *testing.T) 
 	}
 }
 
+func TestRateLimitCooldownSettingOverridesEnvironment(t *testing.T) {
+	t.Setenv("KIRO_RATE_LIMIT_COOLDOWN_ENABLED", "true")
+	if err := Init(filepath.Join(t.TempDir(), "kiro.db")); err != nil {
+		t.Fatalf("init config: %v", err)
+	}
+
+	if !RateLimitCooldownEnabled() {
+		t.Fatal("expected environment fallback to enable rate-limit cooldown")
+	}
+	if err := UpdateRateLimitCooldownEnabled(false); err != nil {
+		t.Fatalf("disable rate-limit cooldown: %v", err)
+	}
+	if RateLimitCooldownEnabled() {
+		t.Fatal("expected persisted setting to override environment fallback")
+	}
+	if err := Load(); err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if RateLimitCooldownEnabled() {
+		t.Fatal("expected disabled setting to remain persisted after reload")
+	}
+}
+
 func TestModelMappingsDefaultAndUpdate(t *testing.T) {
 	if err := Init(filepath.Join(t.TempDir(), "kiro.db")); err != nil {
 		t.Fatalf("init config: %v", err)

@@ -231,6 +231,8 @@ go build -o kiro-proxy .
 | `KIRO_RATE_LIMIT_COOLDOWN_ENABLED`       | Persist a local cooldown after an upstream HTTP 429               | `false` |
 | `KIRO_SUSPICIOUS_COOLDOWN_SECONDS`       | Cooldown after Kiro reports suspicious request activity          | `3600`  |
 
+The HTTP 429 cooldown can also be changed from **Settings → Usage Control**. Once saved, the database value takes precedence over `KIRO_RATE_LIMIT_COOLDOWN_ENABLED`; disabling it immediately clears existing local cooldowns.
+
 > [!WARNING]
 > `kiro.db` holds OAuth tokens and admin credentials. Treat it as secret — keep it out of git, screenshots, and chat threads. Mount the database directory as a private volume.
 
@@ -345,6 +347,8 @@ For users in restricted network regions, configure an outbound proxy in the admi
 | `KIRO_ACCOUNT_MAX_QUEUE_WAIT_SECONDS`    | Maximum pacing delay before returning local HTTP 429             | `300`   |
 | `KIRO_RATE_LIMIT_COOLDOWN_ENABLED`       | Persist a local cooldown after an upstream HTTP 429               | `false` |
 | `KIRO_SUSPICIOUS_COOLDOWN_SECONDS`       | Cooldown after Kiro reports suspicious request activity          | `3600`  |
+
+The HTTP 429 cooldown can also be changed from **Settings → Usage Control**. Once saved, the database value takes precedence over `KIRO_RATE_LIMIT_COOLDOWN_ENABLED`; disabling it immediately clears existing local cooldowns.
 
 ```diff
 + kiro.db                # local state — config, credentials, SQLite history, backup blobs

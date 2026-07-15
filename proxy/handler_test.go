@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -308,6 +309,69 @@ func TestUpdateSettingsReloadsPoolAfterAllowOverUsageChange(t *testing.T) {
 	}
 	if got := p.GetNext(); got == nil || got.ID != "over" {
 		t.Fatalf("expected pool reload to make over-quota account routable, got %#v", got)
+	}
+}
+
+func TestUpdateSettingsPersistsAndClearsRateLimitCooldown(t *testing.T) {
+	dir := t.TempDir()
+	if err := db.ResetForTest(dir); err != nil {
+		t.Fatalf("reset db: %v", err)
+	}
+	if err := config.Init(filepath.Join(dir, "kiro.db")); err != nil {
+		t.Fatalf("config.Init: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	p := accountpool.GetPool()
+	p.Reload()
+	if err := p.ClearCooldowns(); err != nil {
+		t.Fatalf("clear initial cooldowns: %v", err)
+	}
+	h := &Handler{pool: p, accountPacer: newAccountPacerFromEnv()}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings", strings.NewReader(`{"rateLimitCooldownEnabled":true}`))
+	h.apiUpdateSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enable cooldown status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !config.RateLimitCooldownEnabled() {
+		t.Fatal("expected rate-limit cooldown to be enabled")
+	}
+
+	rec = httptest.NewRecorder()
+	h.apiGetSettings(rec, httptest.NewRequest(http.MethodGet, "/admin/api/settings", nil))
+	var settings map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &settings); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+	if enabled, ok := settings["rateLimitCooldownEnabled"].(bool); !ok || !enabled {
+		t.Fatalf("expected GET settings to include enabled cooldown, got %#v", settings)
+	}
+
+	p.RecordRateLimit("acct", time.Hour)
+	if got := p.CooldownDelay("acct"); got < 59*time.Minute {
+		t.Fatalf("expected seeded pool cooldown near one hour, got %s", got)
+	}
+	h.accountPacer.slot("acct").nextStart = time.Now().Add(time.Hour)
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/admin/api/settings", strings.NewReader(`{"rateLimitCooldownEnabled":false}`))
+	h.apiUpdateSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable cooldown status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if config.RateLimitCooldownEnabled() {
+		t.Fatal("expected rate-limit cooldown to be disabled")
+	}
+	if got := p.CooldownDelay("acct"); got != 0 {
+		t.Fatalf("expected pool cooldown to clear immediately, got %s", got)
+	}
+	h.accountPacer.slotsMu.Lock()
+	remainingSlots := len(h.accountPacer.slots)
+	h.accountPacer.slotsMu.Unlock()
+	if remainingSlots != 0 {
+		t.Fatalf("expected account pacer blocks to clear immediately, got %d slots", remainingSlots)
 	}
 }
 

@@ -193,6 +193,8 @@ type Config struct {
 
 	AllowOverUsage bool `json:"allowOverUsage,omitempty"`
 
+	RateLimitCooldownEnabled *bool `json:"rateLimitCooldownEnabled,omitempty"`
+
 	ProxyURL string `json:"proxyURL,omitempty"`
 
 	FilterClaudeCode bool `json:"filterClaudeCode,omitempty"`
@@ -239,7 +241,7 @@ type AccountInfo struct {
 	TrialExpiresAt    int64
 }
 
-const Version = "1.1.7"
+const Version = "1.1.8"
 
 var (
 	cfg     *Config
@@ -895,11 +897,26 @@ func GetAllowOverUsage() bool {
 }
 
 func RateLimitCooldownEnabled() bool {
+	cfgLock.RLock()
+	if cfg != nil && cfg.RateLimitCooldownEnabled != nil {
+		enabled := *cfg.RateLimitCooldownEnabled
+		cfgLock.RUnlock()
+		return enabled
+	}
+	cfgLock.RUnlock()
+
 	raw := strings.ToLower(strings.TrimSpace(os.Getenv("KIRO_RATE_LIMIT_COOLDOWN_ENABLED")))
 	if raw == "" {
 		return false
 	}
 	return raw == "1" || raw == "true" || raw == "yes" || raw == "on"
+}
+
+func UpdateRateLimitCooldownEnabled(enabled bool) error {
+	cfgLock.Lock()
+	defer cfgLock.Unlock()
+	cfg.RateLimitCooldownEnabled = &enabled
+	return Save()
 }
 
 func UpdateAllowOverUsage(allow bool) error {

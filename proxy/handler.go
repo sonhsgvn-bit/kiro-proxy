@@ -3613,10 +3613,11 @@ func (h *Handler) apiGetStatus(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) apiGetSettings(w http.ResponseWriter, _ *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"requireApiKey":  config.IsApiKeyRequired(),
-		"port":           config.GetPort(),
-		"host":           config.GetHost(),
-		"allowOverUsage": config.GetAllowOverUsage(),
+		"requireApiKey":            config.IsApiKeyRequired(),
+		"port":                     config.GetPort(),
+		"host":                     config.GetHost(),
+		"allowOverUsage":           config.GetAllowOverUsage(),
+		"rateLimitCooldownEnabled": config.RateLimitCooldownEnabled(),
 	})
 }
 
@@ -3688,9 +3689,10 @@ func (h *Handler) apiUpdateModelMappings(w http.ResponseWriter, r *http.Request)
 
 func (h *Handler) apiUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		RequireApiKey  *bool  `json:"requireApiKey,omitempty"`
-		Password       string `json:"password,omitempty"`
-		AllowOverUsage *bool  `json:"allowOverUsage,omitempty"`
+		RequireApiKey            *bool  `json:"requireApiKey,omitempty"`
+		Password                 string `json:"password,omitempty"`
+		AllowOverUsage           *bool  `json:"allowOverUsage,omitempty"`
+		RateLimitCooldownEnabled *bool  `json:"rateLimitCooldownEnabled,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(400)
@@ -3711,6 +3713,24 @@ func (h *Handler) apiUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.pool.Reload()
+	}
+
+	if req.RateLimitCooldownEnabled != nil {
+		if err := config.UpdateRateLimitCooldownEnabled(*req.RateLimitCooldownEnabled); err != nil {
+			w.WriteHeader(500)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		if !*req.RateLimitCooldownEnabled {
+			if h.pool != nil {
+				if err := h.pool.ClearCooldowns(); err != nil {
+					w.WriteHeader(500)
+					json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+					return
+				}
+			}
+			h.accountPacer.clearRateLimitCooldowns()
+		}
 	}
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

@@ -124,6 +124,15 @@ func (p *accountPacer) slot(accountID string) *accountPaceSlot {
 	return slot
 }
 
+func (p *accountPacer) clearRateLimitCooldowns() {
+	if p == nil {
+		return
+	}
+	p.slotsMu.Lock()
+	p.slots = make(map[string]*accountPaceSlot)
+	p.slotsMu.Unlock()
+}
+
 func (p *accountPacer) do(account *config.Account, payload *KiroPayload, estimatedInputTokens int, call func() error) error {
 	if p == nil || !p.enabled || !shouldPaceKiroAccount(account) {
 		return call()

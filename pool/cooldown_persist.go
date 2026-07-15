@@ -12,6 +12,9 @@ func (p *AccountPool) SaveCooldowns() error {
 	if p == nil {
 		return nil
 	}
+	p.cooldownSaveMu.Lock()
+	defer p.cooldownSaveMu.Unlock()
+
 	p.mu.RLock()
 	now := time.Now()
 	type kv struct {
@@ -53,6 +56,16 @@ func (p *AccountPool) SaveCooldowns() error {
 		stmt.Close()
 	}
 	return tx.Commit()
+}
+
+func (p *AccountPool) ClearCooldowns() error {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	p.cooldowns = make(map[string]time.Time)
+	p.mu.Unlock()
+	return p.SaveCooldowns()
 }
 
 func (p *AccountPool) loadCooldowns() error {

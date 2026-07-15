@@ -3,6 +3,7 @@ package pool
 import (
 	"errors"
 	"kiro-proxy/config"
+	"kiro-proxy/db"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -484,6 +485,41 @@ func TestCooldownDelayReturnsAccountCooldown(t *testing.T) {
 	}
 	if got := p.CooldownDelay("missing"); got != 0 {
 		t.Fatalf("expected no cooldown for missing account, got %s", got)
+	}
+}
+
+func TestClearCooldownsRemovesMemoryAndPersistedRows(t *testing.T) {
+	dir := t.TempDir()
+	if err := db.ResetForTest(dir); err != nil {
+		t.Fatalf("reset db: %v", err)
+	}
+	if err := config.Init(filepath.Join(dir, "kiro.db")); err != nil {
+		t.Fatalf("init config: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	p := newTestPool(config.Account{ID: "acct"})
+	p.cooldowns["acct"] = time.Now().Add(time.Hour)
+	if err := p.SaveCooldowns(); err != nil {
+		t.Fatalf("save cooldowns: %v", err)
+	}
+	if err := p.ClearCooldowns(); err != nil {
+		t.Fatalf("clear cooldowns: %v", err)
+	}
+	if got := p.CooldownDelay("acct"); got != 0 {
+		t.Fatalf("expected in-memory cooldown to be cleared, got %s", got)
+	}
+
+	database, err := db.Get()
+	if err != nil {
+		t.Fatalf("get db: %v", err)
+	}
+	var count int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM cooldowns`).Scan(&count); err != nil {
+		t.Fatalf("count cooldown rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected persisted cooldown rows to be cleared, got %d", count)
 	}
 }
 

@@ -1585,6 +1585,7 @@
     $('requireApiKey').checked = d.requireApiKey;
     syncApiKeyManagementVisibility();
     $('allowOverUsage').checked = d.allowOverUsage || false;
+    $('rateLimitCooldownEnabled').checked = d.rateLimitCooldownEnabled || false;
     await Promise.all([loadApiKeys(), loadThinkingConfig(), loadModelMappings(), loadEndpointConfig(), loadProxyConfig(), loadPromptFilter()]);
     syncApiKeyManagementVisibility();
     refreshCustomSelects();
@@ -2004,7 +2005,8 @@
   }
   async function saveOverUsageConfig() {
     const allowOverUsage = $('allowOverUsage').checked;
-    await api('/settings', { method: 'POST', body: JSON.stringify({ allowOverUsage }) });
+    const rateLimitCooldownEnabled = $('rateLimitCooldownEnabled').checked;
+    await api('/settings', { method: 'POST', body: JSON.stringify({ allowOverUsage, rateLimitCooldownEnabled }) });
     toast(t('settings.overUsageSaved'), 'success');
   }
   async function changePassword() {

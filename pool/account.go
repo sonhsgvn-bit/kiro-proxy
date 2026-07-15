@@ -10,14 +10,15 @@ import (
 const tokenRefreshSkewSeconds int64 = 120
 
 type AccountPool struct {
-	mu            sync.RWMutex
-	accounts      []config.Account
-	totalAccounts int
-	currentIndex  uint64
-	lastSelected  string
-	cooldowns     map[string]time.Time
-	errorCounts   map[string]int
-	modelLists    map[string]map[string]bool
+	mu             sync.RWMutex
+	cooldownSaveMu sync.Mutex
+	accounts       []config.Account
+	totalAccounts  int
+	currentIndex   uint64
+	lastSelected   string
+	cooldowns      map[string]time.Time
+	errorCounts    map[string]int
+	modelLists     map[string]map[string]bool
 }
 
 var (
