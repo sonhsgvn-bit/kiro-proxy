@@ -457,6 +457,19 @@ func TestNextCooldownDelayForModel(t *testing.T) {
 	}
 }
 
+func TestCooldownDelayReturnsAccountCooldown(t *testing.T) {
+	p := newTestPool(config.Account{ID: "acct"})
+	p.cooldowns["acct"] = time.Now().Add(20 * time.Second)
+
+	delay := p.CooldownDelay("acct")
+	if delay < 19*time.Second || delay > 21*time.Second {
+		t.Fatalf("expected cooldown near 20s, got %s", delay)
+	}
+	if got := p.CooldownDelay("missing"); got != 0 {
+		t.Fatalf("expected no cooldown for missing account, got %s", got)
+	}
+}
+
 func TestGetNextAndUpdateTokenCanRunConcurrently(t *testing.T) {
 	p := newTestPool(config.Account{
 		ID:           "acct",

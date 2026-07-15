@@ -3749,6 +3749,12 @@ func (h *Handler) apiTestAccount(w http.ResponseWriter, r *http.Request, id stri
 		json.NewEncoder(w).Encode(map[string]string{"error": "Account not found"})
 		return
 	}
+	if err := h.cooldownErrorForAccount(account.ID); err != nil {
+		setRetryAfterHeader(w, err)
+		w.WriteHeader(proxyErrorStatus(err))
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
 
 	if err := h.ensureValidToken(account); err != nil {
 		w.WriteHeader(500)

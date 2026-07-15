@@ -116,3 +116,20 @@ func (h *Handler) cooldownErrorForModel(model string) error {
 		RetryAfter: retryAfter,
 	}
 }
+
+func (h *Handler) cooldownErrorForAccount(accountID string) error {
+	if h == nil || h.pool == nil {
+		return nil
+	}
+	retryAfter := h.pool.CooldownDelay(accountID)
+	if retryAfter <= 0 {
+		return nil
+	}
+	seconds := int((retryAfter + time.Second - 1) / time.Second)
+	return &kiroHTTPError{
+		StatusCode: http.StatusTooManyRequests,
+		Endpoint:   "account pool",
+		Body:       fmt.Sprintf("account is temporarily rate limited; retry in %d seconds", seconds),
+		RetryAfter: retryAfter,
+	}
+}

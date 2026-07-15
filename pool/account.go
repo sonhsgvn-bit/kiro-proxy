@@ -431,6 +431,23 @@ func (p *AccountPool) NextCooldownDelayForModel(model string) time.Duration {
 	return earliest.Sub(now)
 }
 
+func (p *AccountPool) CooldownDelay(accountID string) time.Duration {
+	if p == nil || accountID == "" {
+		return 0
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	cooldown, ok := p.cooldowns[accountID]
+	if !ok {
+		return 0
+	}
+	delay := time.Until(cooldown)
+	if delay <= 0 {
+		return 0
+	}
+	return delay
+}
+
 func (p *AccountPool) UpdateStats(id string, tokens int, credits float64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
