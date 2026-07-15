@@ -162,7 +162,7 @@ func (p *accountPacer) do(account *config.Account, payload *KiroPayload, estimat
 
 	cooldown := rateLimitCooldownForError(err)
 	if cooldown <= 0 {
-		cooldown = 30 * time.Second
+		return err
 	}
 	blockedUntil := p.now().Add(cooldown)
 	if blockedUntil.After(slot.nextStart) {

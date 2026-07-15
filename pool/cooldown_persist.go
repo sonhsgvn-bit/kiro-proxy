@@ -3,6 +3,7 @@ package pool
 import (
 	"time"
 
+	"kiro-proxy/config"
 	"kiro-proxy/db"
 	"kiro-proxy/logger"
 )
@@ -61,6 +62,16 @@ func (p *AccountPool) loadCooldowns() error {
 	d, err := db.Get()
 	if err != nil {
 		return err
+	}
+	if !config.RateLimitCooldownEnabled() {
+		if _, err := d.Exec(`DELETE FROM cooldowns`); err != nil {
+			return err
+		}
+		p.mu.Lock()
+		p.cooldowns = make(map[string]time.Time)
+		p.mu.Unlock()
+		logger.Infof("[Pool] Local upstream-429 cooldown is disabled; cleared persisted cooldowns")
+		return nil
 	}
 	now := time.Now().Unix()
 	rows, err := d.Query(`SELECT account_id, expires_at FROM cooldowns WHERE expires_at > ?`, now)

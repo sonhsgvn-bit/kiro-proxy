@@ -134,6 +134,9 @@ func rateLimitCooldownForError(err error) time.Duration {
 	if err == nil {
 		return 0
 	}
+	if !config.RateLimitCooldownEnabled() {
+		return 0
+	}
 	cooldown := retryAfterFromError(err)
 	if isSuspiciousRateLimitErrorMessage(err.Error()) {
 		if minimum := suspiciousRateLimitCooldown(); cooldown < minimum {

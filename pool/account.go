@@ -212,6 +212,17 @@ func (p *AccountPool) RecordSuccess(id string) {
 }
 
 func (p *AccountPool) RecordRateLimit(id string, retryAfter time.Duration) int {
+	if !config.RateLimitCooldownEnabled() {
+		p.mu.Lock()
+		p.errorCounts[id]++
+		count := p.errorCounts[id]
+		delete(p.cooldowns, id)
+		p.mu.Unlock()
+		go func() {
+			_ = p.SaveCooldowns()
+		}()
+		return count
+	}
 	if retryAfter <= 0 {
 		retryAfter = 30 * time.Second
 	}

@@ -48,6 +48,7 @@ func TestGeneric429IsNotRetriedOnSameAccount(t *testing.T) {
 }
 
 func TestSuspiciousRateLimitUsesProtectiveCooldown(t *testing.T) {
+	t.Setenv("KIRO_RATE_LIMIT_COOLDOWN_ENABLED", "true")
 	t.Setenv("KIRO_SUSPICIOUS_COOLDOWN_SECONDS", "3600")
 	err := newKiroHTTPError(429, "Kiro Gateway", []byte(`{
 		"message":"Due to suspicious activity, we are imposing temporary limits on how frequently your account can send a request",

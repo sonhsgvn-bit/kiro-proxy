@@ -394,6 +394,7 @@ func TestReturnedAccountsAreSnapshots(t *testing.T) {
 }
 
 func TestRecordRateLimitUsesShortCooldown(t *testing.T) {
+	t.Setenv("KIRO_RATE_LIMIT_COOLDOWN_ENABLED", "true")
 	p := newTestPool(config.Account{ID: "acct"})
 	before := time.Now().Add(29 * time.Second)
 	p.RecordRateLimit("acct", 0)
@@ -411,6 +412,7 @@ func TestRecordRateLimitUsesShortCooldown(t *testing.T) {
 }
 
 func TestRecordRateLimitAllowsProtectiveCooldown(t *testing.T) {
+	t.Setenv("KIRO_RATE_LIMIT_COOLDOWN_ENABLED", "true")
 	p := newTestPool(config.Account{ID: "acct"})
 	before := time.Now().Add(59 * time.Minute)
 	p.RecordRateLimit("acct", time.Hour)
@@ -421,6 +423,21 @@ func TestRecordRateLimitAllowsProtectiveCooldown(t *testing.T) {
 	p.mu.RUnlock()
 	if cooldown.Before(before) || cooldown.After(after) {
 		t.Fatalf("expected approximately one-hour cooldown, got %s", cooldown)
+	}
+}
+
+func TestRecordRateLimitDisabledDoesNotCooldown(t *testing.T) {
+	t.Setenv("KIRO_RATE_LIMIT_COOLDOWN_ENABLED", "false")
+	p := newTestPool(config.Account{ID: "acct"})
+	p.cooldowns["acct"] = time.Now().Add(time.Hour)
+
+	p.RecordRateLimit("acct", time.Hour)
+
+	p.mu.RLock()
+	_, hasCooldown := p.cooldowns["acct"]
+	p.mu.RUnlock()
+	if hasCooldown {
+		t.Fatal("expected disabled upstream-429 cooldown to clear the account block")
 	}
 }
 

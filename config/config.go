@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -238,7 +239,7 @@ type AccountInfo struct {
 	TrialExpiresAt    int64
 }
 
-const Version = "1.1.6"
+const Version = "1.1.7"
 
 var (
 	cfg     *Config
@@ -891,6 +892,14 @@ func GetAllowOverUsage() bool {
 		return false
 	}
 	return cfg.AllowOverUsage
+}
+
+func RateLimitCooldownEnabled() bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv("KIRO_RATE_LIMIT_COOLDOWN_ENABLED")))
+	if raw == "" {
+		return false
+	}
+	return raw == "1" || raw == "true" || raw == "yes" || raw == "on"
 }
 
 func UpdateAllowOverUsage(allow bool) error {

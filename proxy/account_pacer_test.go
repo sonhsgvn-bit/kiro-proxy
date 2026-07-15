@@ -45,6 +45,7 @@ func TestAccountPacerSpacesLargeExternalIDPRequests(t *testing.T) {
 }
 
 func TestAccountPacerStopsQueueAfterSuspiciousRateLimit(t *testing.T) {
+	t.Setenv("KIRO_RATE_LIMIT_COOLDOWN_ENABLED", "true")
 	t.Setenv("KIRO_SUSPICIOUS_COOLDOWN_SECONDS", "3600")
 	now := time.Unix(1000, 0)
 	pacer := newTestAccountPacer(&now)

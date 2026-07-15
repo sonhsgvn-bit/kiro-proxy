@@ -228,6 +228,7 @@ go build -o kiro-proxy .
 | `KIRO_ACCOUNT_TPM_LIMIT`                 | Approximate input-token budget per account per minute           | `90000` |
 | `KIRO_ACCOUNT_MIN_INTERVAL_MS`           | Minimum delay between upstream requests for one account          | `5000`  |
 | `KIRO_ACCOUNT_MAX_QUEUE_WAIT_SECONDS`    | Maximum pacing delay before returning local HTTP 429             | `300`   |
+| `KIRO_RATE_LIMIT_COOLDOWN_ENABLED`       | Persist a local cooldown after an upstream HTTP 429               | `false` |
 | `KIRO_SUSPICIOUS_COOLDOWN_SECONDS`       | Cooldown after Kiro reports suspicious request activity          | `3600`  |
 
 > [!WARNING]
@@ -342,6 +343,7 @@ For users in restricted network regions, configure an outbound proxy in the admi
 | `KIRO_ACCOUNT_TPM_LIMIT`                 | Approximate input-token budget per account per minute           | `90000` |
 | `KIRO_ACCOUNT_MIN_INTERVAL_MS`           | Minimum delay between upstream requests for one account          | `5000`  |
 | `KIRO_ACCOUNT_MAX_QUEUE_WAIT_SECONDS`    | Maximum pacing delay before returning local HTTP 429             | `300`   |
+| `KIRO_RATE_LIMIT_COOLDOWN_ENABLED`       | Persist a local cooldown after an upstream HTTP 429               | `false` |
 | `KIRO_SUSPICIOUS_COOLDOWN_SECONDS`       | Cooldown after Kiro reports suspicious request activity          | `3600`  |
 
 ```diff
