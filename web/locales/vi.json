@@ -98,6 +98,7 @@
   "accounts.testLog.globalProxy": "Proxy toàn cục",
   "accounts.testLog.start": "Đang kiểm tra {0} | Model: {1} | Proxy: {2}",
   "accounts.testLog.success": "✓ {0} OK ({1}s) Phản hồi: {2}",
+  "accounts.testLog.credentialOnly": "Lưu ý: Test chỉ xác minh đăng nhập và một request rất nhỏ; không kiểm tra khả năng chịu prompt lớn hoặc giới hạn tốc độ của Kiro.",
   "accounts.testLog.failed": "✗ {0} Thất bại ({1}s): {2}",
   "accounts.testLog.error": "✗ {0} Lỗi: {1}",
   "time.expired": "Đã hết hạn",

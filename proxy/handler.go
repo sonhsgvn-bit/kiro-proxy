@@ -35,6 +35,7 @@ type Handler struct {
 	modelsCacheTime int64
 	promptCache     *promptCacheTracker
 	tokenRefreshMu  sync.Mutex
+	accountPacer    *accountPacer
 }
 
 type thinkingStreamSource int
@@ -216,6 +217,7 @@ func NewHandler() *Handler {
 		stopRefresh:    make(chan struct{}),
 		stopStatsSaver: make(chan struct{}),
 		promptCache:    newPromptCacheTracker(defaultPromptCacheTTL),
+		accountPacer:   newAccountPacerFromEnv(),
 	}
 
 	go h.backgroundRefresh()
@@ -1246,7 +1248,7 @@ func (h *Handler) handleClaudeStream(w http.ResponseWriter, _ *http.Request, pay
 				},
 			}
 
-			err := CallKiroAPI(account, payload, callback)
+			err := h.callKiroAPI(account, payload, callback, estimatedInputTokens)
 			if err != nil {
 				lastErr = err
 				lastAccount = account
@@ -1449,7 +1451,7 @@ func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, _ *http.Request, 
 				},
 			}
 
-			err := CallKiroAPI(account, payload, callback)
+			err := h.callKiroAPI(account, payload, callback, estimatedInputTokens)
 			if err != nil {
 				lastErr = err
 				lastAccount = account
@@ -1922,7 +1924,7 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, _ *http.Request, pay
 				},
 			}
 
-			err := CallKiroAPI(account, payload, callback)
+			err := h.callKiroAPI(account, payload, callback, estimatedInputTokens)
 			if err != nil {
 				lastErr = err
 				lastAccount = account
@@ -2066,7 +2068,7 @@ func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, _ *http.Request, 
 				},
 			}
 
-			err := CallKiroAPI(account, payload, callback)
+			err := h.callKiroAPI(account, payload, callback, estimatedInputTokens)
 			if err != nil {
 				lastErr = err
 				lastAccount = account
@@ -2091,7 +2093,7 @@ func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, _ *http.Request, 
 				}
 				toolUses = nil
 				followupPayload := buildWebSearchFollowupPayload(payload, webSearchToolUses, results)
-				err = CallKiroAPI(account, followupPayload, callback)
+				err = h.callKiroAPI(account, followupPayload, callback, estimatedInputTokens)
 				if err != nil {
 					lastErr = err
 					lastAccount = account
@@ -3783,20 +3785,20 @@ func (h *Handler) apiTestAccount(w http.ResponseWriter, r *http.Request, id stri
 		OnContextUsage: func(pct float64) {},
 	}
 
-	err := CallKiroAPI(account, kiroPayload, callback)
+	err := h.callKiroAPI(account, kiroPayload, callback, 16)
 	if err != nil {
+		h.handleAccountFailure(account, err)
 		status := proxyErrorStatus(err)
 		setRetryAfterHeader(w, err)
 		w.WriteHeader(status)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	h.pool.RecordSuccess(account.ID)
-
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"reply":   content,
-		"model":   req.Model,
+		"success":   true,
+		"reply":     content,
+		"model":     req.Model,
+		"checkType": "credential_only",
 	})
 }
 

@@ -229,6 +229,16 @@ func TestSetPayloadProfileArnForAccountPreservesExplicitPayloadArn(t *testing.T)
 	}
 }
 
+func TestExternalIDPUsesSingleAWSDataPlaneEndpoint(t *testing.T) {
+	endpoints := endpointsForAccount(&config.Account{AuthMethod: "external_idp"})
+	if len(endpoints) != 1 {
+		t.Fatalf("expected one external IdP endpoint, got %#v", endpoints)
+	}
+	if endpoints[0].URL != "https://q.us-east-1.amazonaws.com/generateAssistantResponse" {
+		t.Fatalf("expected Amazon Q data-plane endpoint, got %q", endpoints[0].URL)
+	}
+}
+
 func TestCallKiroAPISkipsProfileResolutionForAPIKeyCredential(t *testing.T) {
 	if err := config.Init(t.TempDir() + "/kiro.db"); err != nil {
 		t.Fatalf("init config: %v", err)

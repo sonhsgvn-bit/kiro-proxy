@@ -22,11 +22,38 @@ const (
 )
 
 func regionFromProfileArn(profileArn string) string {
-	parts := strings.Split(strings.TrimSpace(profileArn), ":")
-	if len(parts) < 4 {
+	parts := strings.SplitN(strings.TrimSpace(profileArn), ":", 6)
+	if len(parts) < 6 || parts[0] != "arn" || parts[2] != "codewhisperer" {
 		return ""
 	}
 	return strings.TrimSpace(parts[3])
+}
+
+func kiroRegionForProfile(account *config.Account, profileArn string) string {
+	if region := regionFromProfileArn(profileArn); region != "" {
+		return region
+	}
+	if account != nil {
+		if region := regionFromProfileArn(account.ProfileArn); region != "" {
+			return region
+		}
+		if region := strings.TrimSpace(account.Region); region != "" {
+			return region
+		}
+	}
+	return "us-east-1"
+}
+
+func regionalizeURLForProfile(rawURL string, account *config.Account, profileArn string) string {
+	region := kiroRegionForProfile(account, profileArn)
+	if region == "" || region == "us-east-1" {
+		return rawURL
+	}
+	regionalHost := "q." + region + ".amazonaws.com"
+	return strings.NewReplacer(
+		"q.us-east-1.amazonaws.com", regionalHost,
+		"codewhisperer.us-east-1.amazonaws.com", regionalHost,
+	).Replace(rawURL)
 }
 
 // managementBase returns the correct management/REST base URL for the account.

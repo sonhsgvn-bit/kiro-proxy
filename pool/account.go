@@ -218,8 +218,8 @@ func (p *AccountPool) RecordRateLimit(id string, retryAfter time.Duration) int {
 	if retryAfter < 5*time.Second {
 		retryAfter = 5 * time.Second
 	}
-	if retryAfter > 5*time.Minute {
-		retryAfter = 5 * time.Minute
+	if retryAfter > 24*time.Hour {
+		retryAfter = 24 * time.Hour
 	}
 
 	p.mu.Lock()

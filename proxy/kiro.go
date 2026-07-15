@@ -47,19 +47,12 @@ var kiroEndpoints = []kiroEndpoint{
 	},
 }
 
-// ! Enterprise accounts that sign in through an external IdP (Microsoft Entra /
-// ! Okta) do NOT use the amazonaws.com endpoints. Their IdP-issued token is only
-// ! accepted by Kiro's own gateway, so route those accounts there instead.
-var kiroGatewayEndpoint = kiroEndpoint{
-	URL:       "https://runtime.us-east-1.kiro.dev/generateAssistantResponse",
-	Origin:    "AI_EDITOR",
-	AmzTarget: "",
-	Name:      "Kiro Gateway",
-}
-
 func endpointsForAccount(account *config.Account) []kiroEndpoint {
 	if account != nil && account.AuthMethod == "external_idp" {
-		return []kiroEndpoint{kiroGatewayEndpoint}
+		//! Microsoft 365 / external IdP tokens are accepted by the Amazon Q
+		//! data-plane when TokenType=EXTERNAL_IDP is present. Keep this account
+		//! on one endpoint so a 429 cannot fan out into duplicate upstream calls.
+		return []kiroEndpoint{kiroEndpoints[0]}
 	}
 	return getSortedEndpoints(config.GetPreferredEndpoint())
 }
@@ -335,16 +328,17 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 	for _, ep := range endpoints {
 
 		payload.ConversationState.CurrentMessage.UserInputMessage.Origin = ep.Origin
+		epURL := regionalizeURLForProfile(ep.URL, account, payload.ProfileArn)
 
 		reqBody, _ := json.Marshal(payload)
-		req, err := http.NewRequest("POST", ep.URL, bytes.NewReader(reqBody))
+		req, err := http.NewRequest("POST", epURL, bytes.NewReader(reqBody))
 		if err != nil {
 			lastErr = err
 			continue
 		}
 
 		host := ""
-		if parsedURL, parseErr := url.Parse(ep.URL); parseErr == nil {
+		if parsedURL, parseErr := url.Parse(epURL); parseErr == nil {
 			host = parsedURL.Host
 		}
 		headerValues := buildStreamingHeaderValues(account, host)

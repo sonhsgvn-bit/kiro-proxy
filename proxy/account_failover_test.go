@@ -32,18 +32,33 @@ func TestAccountFailureClassifiers(t *testing.T) {
 	}
 }
 
-func TestGeneric429IsRetriedAsRateLimit(t *testing.T) {
+func TestGeneric429IsNotRetriedOnSameAccount(t *testing.T) {
 	err := newKiroHTTPError(429, "Kiro Gateway", []byte(`{"code":"ThrottlingException"}`), "9")
 	if isQuotaErrorMessage(err.Error()) {
 		t.Fatalf("generic 429 must not be treated as exhausted monthly quota: %v", err)
 	}
 
 	plan := newRequestRetryPlan()
-	if !plan.canRetrySameAccount(err, 0, 1) {
-		t.Fatalf("expected transient 429 to retry the same account")
+	if plan.canRetrySameAccount(err, 0, 1) {
+		t.Fatalf("rate-limited account must not be retried in the same request")
 	}
 	if !plan.rateLimited || plan.pendingRetryAfter != 9*time.Second {
 		t.Fatalf("expected retry hint to be captured, rateLimited=%v retryAfter=%s", plan.rateLimited, plan.pendingRetryAfter)
+	}
+}
+
+func TestSuspiciousRateLimitUsesProtectiveCooldown(t *testing.T) {
+	t.Setenv("KIRO_SUSPICIOUS_COOLDOWN_SECONDS", "3600")
+	err := newKiroHTTPError(429, "Kiro Gateway", []byte(`{
+		"message":"Due to suspicious activity, we are imposing temporary limits on how frequently your account can send a request",
+		"reason":"USER_REQUEST_RATE_EXCEEDED"
+	}`), "")
+
+	if !isSuspiciousRateLimitErrorMessage(err.Error()) {
+		t.Fatalf("expected suspicious activity rate limit to be classified: %v", err)
+	}
+	if got := rateLimitCooldownForError(err); got != time.Hour {
+		t.Fatalf("expected one-hour protective cooldown, got %s", got)
 	}
 }
 

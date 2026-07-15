@@ -98,6 +98,7 @@
   "accounts.testLog.globalProxy": "Global Proxy",
   "accounts.testLog.start": "Testing {0} | Model: {1} | Proxy: {2}",
   "accounts.testLog.success": "✓ {0} OK ({1}s) Reply: {2}",
+  "accounts.testLog.credentialOnly": "Note: Test only verifies authentication with a very small request; it does not validate large prompts or Kiro rate capacity.",
   "accounts.testLog.failed": "✗ {0} Failed ({1}s): {2}",
   "accounts.testLog.error": "✗ {0} Error: {1}",
   "time.expired": "Expired",

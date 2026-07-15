@@ -1567,6 +1567,9 @@
       const d = await res.json();
       if (d.success) {
         addTestLog(t('accounts.testLog.success', email, elapsed, d.reply), 'ok');
+        if (d.checkType === 'credential_only') {
+          addTestLog(t('accounts.testLog.credentialOnly'), 'info');
+        }
       } else {
         addTestLog(t('accounts.testLog.failed', email, elapsed, localizedError(d.error) || t('common.unknownError')), 'err');
       }

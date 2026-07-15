@@ -410,6 +410,20 @@ func TestRecordRateLimitUsesShortCooldown(t *testing.T) {
 	}
 }
 
+func TestRecordRateLimitAllowsProtectiveCooldown(t *testing.T) {
+	p := newTestPool(config.Account{ID: "acct"})
+	before := time.Now().Add(59 * time.Minute)
+	p.RecordRateLimit("acct", time.Hour)
+	after := time.Now().Add(61 * time.Minute)
+
+	p.mu.RLock()
+	cooldown := p.cooldowns["acct"]
+	p.mu.RUnlock()
+	if cooldown.Before(before) || cooldown.After(after) {
+		t.Fatalf("expected approximately one-hour cooldown, got %s", cooldown)
+	}
+}
+
 func TestRecordSuccessClearsCooldown(t *testing.T) {
 	p := newTestPool(config.Account{ID: "acct"})
 	p.cooldowns["acct"] = time.Now().Add(time.Hour)

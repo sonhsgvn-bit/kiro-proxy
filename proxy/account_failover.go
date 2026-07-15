@@ -41,6 +41,9 @@ func (rp *requestRetryPlan) canRetrySameAccount(err error, accountAttempt, total
 	if err == nil || accountAttempt+1 >= rp.maxPerAccount || totalAttempts >= rp.maxPerRequest {
 		return false
 	}
+	if isRateLimitErrorMessage(err.Error()) {
+		return false
+	}
 	return !isTerminalAccountErrorMessage(err.Error())
 }
 
@@ -118,6 +121,26 @@ func isRateLimitErrorMessage(msg string) bool {
 		strings.Contains(msg, "rate limit") ||
 		strings.Contains(msg, "ratelimit") ||
 		strings.Contains(msg, "throttl")
+}
+
+func isSuspiciousRateLimitErrorMessage(msg string) bool {
+	msg = strings.ToLower(msg)
+	return strings.Contains(msg, "user_request_rate_exceeded") ||
+		strings.Contains(msg, "suspicious activity") ||
+		strings.Contains(msg, "temporary limits on how frequently")
+}
+
+func rateLimitCooldownForError(err error) time.Duration {
+	if err == nil {
+		return 0
+	}
+	cooldown := retryAfterFromError(err)
+	if isSuspiciousRateLimitErrorMessage(err.Error()) {
+		if minimum := suspiciousRateLimitCooldown(); cooldown < minimum {
+			cooldown = minimum
+		}
+	}
+	return cooldown
 }
 
 func isOverageErrorMessage(msg string) bool {
@@ -207,7 +230,7 @@ func (h *Handler) handleAccountFailure(account *config.Account, err error) {
 	case isQuotaErrorMessage(errMsg):
 		h.pool.RecordError(account.ID, true)
 	case isRateLimitErrorMessage(errMsg):
-		h.pool.RecordRateLimit(account.ID, retryAfterFromError(err))
+		h.pool.RecordRateLimit(account.ID, rateLimitCooldownForError(err))
 	case isSuspensionErrorMessage(errMsg):
 		h.disableAccount(account, "BANNED", "AWS temporarily suspended - unusual user activity detected")
 	case isProfileUnavailableErrorMessage(errMsg):

@@ -169,7 +169,7 @@ func (h *Handler) handleOpenAIResponsesNonStream(w http.ResponseWriter, payload 
 				},
 			}
 
-			err := CallKiroAPI(account, payload, callback)
+			err := h.callKiroAPI(account, payload, callback, estimatedInputTokens)
 			if err != nil {
 				lastErr = err
 				lastAccount = account
@@ -194,7 +194,7 @@ func (h *Handler) handleOpenAIResponsesNonStream(w http.ResponseWriter, payload 
 				}
 				toolUses = nil
 				followupPayload := buildWebSearchFollowupPayload(payload, webSearchToolUses, results)
-				err = CallKiroAPI(account, followupPayload, callback)
+				err = h.callKiroAPI(account, followupPayload, callback, estimatedInputTokens)
 				if err != nil {
 					lastErr = err
 					lastAccount = account
@@ -392,7 +392,7 @@ func (h *Handler) handleOpenAIResponsesStream(w http.ResponseWriter, payload *Ki
 				},
 			}
 
-			err := CallKiroAPI(account, payload, callback)
+			err := h.callKiroAPI(account, payload, callback, estimatedInputTokens)
 			if err != nil {
 				lastErr = err
 				lastAccount = account

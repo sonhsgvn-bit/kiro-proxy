@@ -220,13 +220,21 @@ go build -o kiro-proxy .
 
 ## 🔧 Configuration
 
-| Variable         | Purpose                                   | Default            |
-| ---------------- | ----------------------------------------- | ------------------ |
-| `DATA_DIR`        | Directory for `kiro.db`                   | `.`                |
-| `ADMIN_PASSWORD` | Admin panel password (overrides config)   | —                  |
+| Variable                                | Purpose                                                        | Default |
+| --------------------------------------- | -------------------------------------------------------------- | ------- |
+| `DATA_DIR`                              | Directory for `kiro.db`                                        | `.`     |
+| `ADMIN_PASSWORD`                        | Admin panel password (overrides config)                         | —       |
+| `KIRO_ACCOUNT_PACING_ENABLED`           | Serialize and pace Microsoft 365/external IdP upstream requests | `true`  |
+| `KIRO_ACCOUNT_TPM_LIMIT`                 | Approximate input-token budget per account per minute           | `90000` |
+| `KIRO_ACCOUNT_MIN_INTERVAL_MS`           | Minimum delay between upstream requests for one account          | `5000`  |
+| `KIRO_ACCOUNT_MAX_QUEUE_WAIT_SECONDS`    | Maximum pacing delay before returning local HTTP 429             | `300`   |
+| `KIRO_SUSPICIOUS_COOLDOWN_SECONDS`       | Cooldown after Kiro reports suspicious request activity          | `3600`  |
 
 > [!WARNING]
 > `kiro.db` holds OAuth tokens and admin credentials. Treat it as secret — keep it out of git, screenshots, and chat threads. Mount the database directory as a private volume.
+
+> [!IMPORTANT]
+> Do not actively use the same Microsoft 365 / external IdP account from multiple proxy instances (for example localhost and Coolify) at the same time. Different IPs or machine identities can trigger Kiro's `USER_REQUEST_RATE_EXCEEDED` suspicious-activity protection.
 
 ---
 
@@ -326,10 +334,15 @@ For users in restricted network regions, configure an outbound proxy in the admi
 
 ## 🔐 Environment Variables
 
-| Variable         | Description                              | Default            |
-| ---------------- | ---------------------------------------- | ------------------ |
-| `DATA_DIR`        | Directory for `kiro.db`                  | `.`                |
-| `ADMIN_PASSWORD` | Admin panel password (overrides config)  | —                  |
+| Variable                                | Description                                                    | Default |
+| --------------------------------------- | -------------------------------------------------------------- | ------- |
+| `DATA_DIR`                              | Directory for `kiro.db`                                        | `.`     |
+| `ADMIN_PASSWORD`                        | Admin panel password (overrides config)                         | —       |
+| `KIRO_ACCOUNT_PACING_ENABLED`           | Serialize and pace Microsoft 365/external IdP upstream requests | `true`  |
+| `KIRO_ACCOUNT_TPM_LIMIT`                 | Approximate input-token budget per account per minute           | `90000` |
+| `KIRO_ACCOUNT_MIN_INTERVAL_MS`           | Minimum delay between upstream requests for one account          | `5000`  |
+| `KIRO_ACCOUNT_MAX_QUEUE_WAIT_SECONDS`    | Maximum pacing delay before returning local HTTP 429             | `300`   |
+| `KIRO_SUSPICIOUS_COOLDOWN_SECONDS`       | Cooldown after Kiro reports suspicious request activity          | `3600`  |
 
 ```diff
 + kiro.db                # local state — config, credentials, SQLite history, backup blobs

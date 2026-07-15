@@ -39,6 +39,21 @@ func TestRegionFromProfileArn(t *testing.T) {
 	}
 }
 
+func TestRegionalizeURLForProfile(t *testing.T) {
+	account := &config.Account{Region: "us-east-1"}
+	profileArn := "arn:aws:codewhisperer:eu-central-1:123456789012:profile/test"
+
+	got := regionalizeURLForProfile("https://q.us-east-1.amazonaws.com/generateAssistantResponse", account, profileArn)
+	if got != "https://q.eu-central-1.amazonaws.com/generateAssistantResponse" {
+		t.Fatalf("unexpected regionalized Q URL: %q", got)
+	}
+
+	got = regionalizeURLForProfile("https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse", account, profileArn)
+	if got != "https://q.eu-central-1.amazonaws.com/generateAssistantResponse" {
+		t.Fatalf("unexpected regionalized CodeWhisperer URL: %q", got)
+	}
+}
+
 func TestDiscoverKiroProfilesReturnsAllUniqueProfiles(t *testing.T) {
 	kiroRestHttpStore.Store(&http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
