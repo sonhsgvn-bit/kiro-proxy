@@ -368,16 +368,17 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		}
 
 		if resp.StatusCode == 429 {
+			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamErrorBody+1))
 			resp.Body.Close()
-			logger.Warnf("[KiroAPI] Endpoint %s quota exhausted (429), trying next...", ep.Name)
-			lastErr = fmt.Errorf("quota exhausted on %s", ep.Name)
+			lastErr = newKiroHTTPError(resp.StatusCode, ep.Name, errBody, resp.Header.Get("Retry-After"))
+			logger.Warnf("[KiroAPI] Endpoint %s rate limited (429): %v", ep.Name, lastErr)
 			continue
 		}
 
 		if resp.StatusCode != 200 {
-			errBody, _ := io.ReadAll(resp.Body)
+			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamErrorBody+1))
 			resp.Body.Close()
-			lastErr = fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, ep.Name, string(errBody))
+			lastErr = newKiroHTTPError(resp.StatusCode, ep.Name, errBody, resp.Header.Get("Retry-After"))
 
 			if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
 				return lastErr

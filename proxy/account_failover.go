@@ -9,9 +9,11 @@ import (
 )
 
 type requestRetryPlan struct {
-	maxPerAccount int
-	maxPerRequest int
-	backoff       pool.RetryConfig
+	maxPerAccount     int
+	maxPerRequest     int
+	backoff           pool.RetryConfig
+	rateLimited       bool
+	pendingRetryAfter time.Duration
 }
 
 func newRequestRetryPlan() requestRetryPlan {
@@ -34,14 +36,16 @@ func newRequestRetryPlan() requestRetryPlan {
 	}
 }
 
-func (rp requestRetryPlan) canRetrySameAccount(err error, accountAttempt, totalAttempts int) bool {
+func (rp *requestRetryPlan) canRetrySameAccount(err error, accountAttempt, totalAttempts int) bool {
+	rp.captureRetryHint(err)
 	if err == nil || accountAttempt+1 >= rp.maxPerAccount || totalAttempts >= rp.maxPerRequest {
 		return false
 	}
 	return !isTerminalAccountErrorMessage(err.Error())
 }
 
-func (rp requestRetryPlan) shouldBackoffBeforeNextAccount(err error, totalAttempts int) bool {
+func (rp *requestRetryPlan) shouldBackoffBeforeNextAccount(err error, totalAttempts int) bool {
+	rp.captureRetryHint(err)
 	if err == nil || totalAttempts >= rp.maxPerRequest {
 		return false
 	}
@@ -56,8 +60,42 @@ func isTerminalAccountErrorMessage(msg string) bool {
 		isAuthErrorMessage(msg)
 }
 
-func (rp requestRetryPlan) waitBeforeRetry(totalAttempts int) {
+func (rp *requestRetryPlan) captureRetryHint(err error) {
+	if err == nil || isQuotaErrorMessage(err.Error()) || !isRateLimitErrorMessage(err.Error()) {
+		return
+	}
+	rp.rateLimited = true
+	if retryAfter := retryAfterFromError(err); retryAfter > rp.pendingRetryAfter {
+		rp.pendingRetryAfter = retryAfter
+	}
+}
+
+func (rp *requestRetryPlan) waitBeforeRetry(totalAttempts int) {
 	delay := rp.backoff.CalculateBackoff(totalAttempts - 1)
+	if rp.rateLimited {
+		attempt := totalAttempts - 1
+		if attempt < 0 {
+			attempt = 0
+		}
+		if attempt > 3 {
+			attempt = 3
+		}
+		rateDelay := 5 * time.Second * time.Duration(1<<uint(attempt))
+		if rateDelay > 30*time.Second {
+			rateDelay = 30 * time.Second
+		}
+		if rp.pendingRetryAfter > rateDelay {
+			rateDelay = rp.pendingRetryAfter
+		}
+		if rateDelay > 2*time.Minute {
+			rateDelay = 2 * time.Minute
+		}
+		if rateDelay > delay {
+			delay = rateDelay
+		}
+	}
+	rp.rateLimited = false
+	rp.pendingRetryAfter = 0
 	if delay > 0 {
 		time.Sleep(delay)
 	}
@@ -65,7 +103,21 @@ func (rp requestRetryPlan) waitBeforeRetry(totalAttempts int) {
 
 func isQuotaErrorMessage(msg string) bool {
 	msg = strings.ToLower(msg)
-	return strings.Contains(msg, "429") || strings.Contains(msg, "quota")
+	return strings.Contains(msg, "quota exhausted") ||
+		strings.Contains(msg, "quota exceeded") ||
+		strings.Contains(msg, "quotaexceeded") ||
+		strings.Contains(msg, "monthly quota") ||
+		strings.Contains(msg, "credit limit exceeded") ||
+		strings.Contains(msg, "usage limit exceeded")
+}
+
+func isRateLimitErrorMessage(msg string) bool {
+	msg = strings.ToLower(msg)
+	return strings.Contains(msg, "http 429") ||
+		strings.Contains(msg, "too many requests") ||
+		strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "ratelimit") ||
+		strings.Contains(msg, "throttl")
 }
 
 func isOverageErrorMessage(msg string) bool {
@@ -154,6 +206,8 @@ func (h *Handler) handleAccountFailure(account *config.Account, err error) {
 		h.pool.RecordError(account.ID, false)
 	case isQuotaErrorMessage(errMsg):
 		h.pool.RecordError(account.ID, true)
+	case isRateLimitErrorMessage(errMsg):
+		h.pool.RecordRateLimit(account.ID, retryAfterFromError(err))
 	case isSuspensionErrorMessage(errMsg):
 		h.disableAccount(account, "BANNED", "AWS temporarily suspended - unusual user activity detected")
 	case isProfileUnavailableErrorMessage(errMsg):

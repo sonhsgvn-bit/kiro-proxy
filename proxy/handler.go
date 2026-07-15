@@ -1317,13 +1317,18 @@ func (h *Handler) handleClaudeStream(w http.ResponseWriter, _ *http.Request, pay
 	}
 
 	if lastErr == nil {
+		lastErr = h.cooldownErrorForModel(model)
+	}
+	if lastErr == nil {
 		recordFinalRequestForApiKey(apiKeyReservation, nil, model, 0, 0, 0, false, http.StatusServiceUnavailable, "No available accounts")
 		h.sendClaudeError(w, http.StatusServiceUnavailable, "api_error", "No available accounts")
 		return
 	}
 
-	recordFinalRequestForApiKey(apiKeyReservation, lastAccount, model, 0, 0, 0, false, http.StatusInternalServerError, lastErr.Error())
-	h.sendClaudeError(w, http.StatusInternalServerError, "api_error", lastErr.Error())
+	status := proxyErrorStatus(lastErr)
+	setRetryAfterHeader(w, lastErr)
+	recordFinalRequestForApiKey(apiKeyReservation, lastAccount, model, 0, 0, 0, false, status, lastErr.Error())
+	h.sendClaudeError(w, status, proxyErrorType(lastErr, "api_error"), lastErr.Error())
 }
 
 func (h *Handler) sendSSE(w http.ResponseWriter, flusher http.Flusher, event string, data interface{}) {
@@ -1365,6 +1370,9 @@ func accountIdentity(account *config.Account) (string, string) {
 func recordAttemptError(account *config.Account, model string, status int, err error) {
 	if account == nil || err == nil {
 		return
+	}
+	if status == 0 {
+		status = proxyErrorStatus(err)
 	}
 	getObserveStore().RecordFailure(account.ID, model)
 	getObserveStore().RecordError(account.ID, account.Email, model, status, err.Error())
@@ -1513,13 +1521,18 @@ func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, _ *http.Request, 
 	}
 
 	if lastErr == nil {
+		lastErr = h.cooldownErrorForModel(model)
+	}
+	if lastErr == nil {
 		recordFinalRequestForApiKey(apiKeyReservation, nil, model, 0, 0, 0, false, http.StatusServiceUnavailable, "No available accounts")
 		h.sendClaudeError(w, http.StatusServiceUnavailable, "api_error", "No available accounts")
 		return
 	}
 
-	recordFinalRequestForApiKey(apiKeyReservation, lastAccount, model, 0, 0, 0, false, http.StatusInternalServerError, lastErr.Error())
-	h.sendClaudeError(w, http.StatusInternalServerError, "api_error", lastErr.Error())
+	status := proxyErrorStatus(lastErr)
+	setRetryAfterHeader(w, lastErr)
+	recordFinalRequestForApiKey(apiKeyReservation, lastAccount, model, 0, 0, 0, false, status, lastErr.Error())
+	h.sendClaudeError(w, status, proxyErrorType(lastErr, "api_error"), lastErr.Error())
 }
 
 func (h *Handler) sendClaudeError(w http.ResponseWriter, status int, errType, message string) {
@@ -1986,13 +1999,18 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, _ *http.Request, pay
 	}
 
 	if lastErr == nil {
+		lastErr = h.cooldownErrorForModel(model)
+	}
+	if lastErr == nil {
 		recordFinalRequestForApiKey(apiKeyReservation, nil, model, 0, 0, 0, false, http.StatusServiceUnavailable, "No available accounts")
 		h.sendOpenAIError(w, http.StatusServiceUnavailable, "server_error", "No available accounts")
 		return
 	}
 
-	recordFinalRequestForApiKey(apiKeyReservation, lastAccount, model, 0, 0, 0, false, http.StatusInternalServerError, lastErr.Error())
-	h.sendOpenAIError(w, http.StatusInternalServerError, "server_error", lastErr.Error())
+	status := proxyErrorStatus(lastErr)
+	setRetryAfterHeader(w, lastErr)
+	recordFinalRequestForApiKey(apiKeyReservation, lastAccount, model, 0, 0, 0, false, status, lastErr.Error())
+	h.sendOpenAIError(w, status, proxyErrorType(lastErr, "server_error"), lastErr.Error())
 }
 
 func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, _ *http.Request, payload *KiroPayload, model string, thinking bool, estimatedInputTokens int, apiKeyReservation *apiKeyUsageReservation) {
@@ -2109,13 +2127,18 @@ func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, _ *http.Request, 
 	}
 
 	if lastErr == nil {
+		lastErr = h.cooldownErrorForModel(model)
+	}
+	if lastErr == nil {
 		recordFinalRequestForApiKey(apiKeyReservation, nil, model, 0, 0, 0, false, http.StatusServiceUnavailable, "No available accounts")
 		h.sendOpenAIError(w, http.StatusServiceUnavailable, "server_error", "No available accounts")
 		return
 	}
 
-	recordFinalRequestForApiKey(apiKeyReservation, lastAccount, model, 0, 0, 0, false, http.StatusInternalServerError, lastErr.Error())
-	h.sendOpenAIError(w, http.StatusInternalServerError, "server_error", lastErr.Error())
+	status := proxyErrorStatus(lastErr)
+	setRetryAfterHeader(w, lastErr)
+	recordFinalRequestForApiKey(apiKeyReservation, lastAccount, model, 0, 0, 0, false, status, lastErr.Error())
+	h.sendOpenAIError(w, status, proxyErrorType(lastErr, "server_error"), lastErr.Error())
 }
 
 func (h *Handler) sendOpenAIError(w http.ResponseWriter, status int, errType, message string) {
@@ -3762,10 +3785,13 @@ func (h *Handler) apiTestAccount(w http.ResponseWriter, r *http.Request, id stri
 
 	err := CallKiroAPI(account, kiroPayload, callback)
 	if err != nil {
-		w.WriteHeader(500)
+		status := proxyErrorStatus(err)
+		setRetryAfterHeader(w, err)
+		w.WriteHeader(status)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	h.pool.RecordSuccess(account.ID)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

@@ -234,12 +234,17 @@ func (h *Handler) handleOpenAIResponsesNonStream(w http.ResponseWriter, payload 
 	}
 
 	if lastErr == nil {
+		lastErr = h.cooldownErrorForModel(model)
+	}
+	if lastErr == nil {
 		recordFinalRequestForApiKey(apiKeyReservation, nil, model, 0, 0, 0, false, http.StatusServiceUnavailable, "No available accounts")
 		h.sendOpenAIError(w, http.StatusServiceUnavailable, "server_error", "No available accounts")
 		return
 	}
-	recordFinalRequestForApiKey(apiKeyReservation, lastAccount, model, 0, 0, 0, false, http.StatusInternalServerError, lastErr.Error())
-	h.sendOpenAIError(w, http.StatusInternalServerError, "server_error", lastErr.Error())
+	status := proxyErrorStatus(lastErr)
+	setRetryAfterHeader(w, lastErr)
+	recordFinalRequestForApiKey(apiKeyReservation, lastAccount, model, 0, 0, 0, false, status, lastErr.Error())
+	h.sendOpenAIError(w, status, proxyErrorType(lastErr, "server_error"), lastErr.Error())
 }
 
 func (h *Handler) handleOpenAIResponsesStream(w http.ResponseWriter, payload *KiroPayload, prepared *responsesPreparedRequest, thinking bool, estimatedInputTokens int, apiKeyReservation *apiKeyUsageReservation) {
@@ -479,12 +484,17 @@ func (h *Handler) handleOpenAIResponsesStream(w http.ResponseWriter, payload *Ki
 	}
 
 	if lastErr == nil {
+		lastErr = h.cooldownErrorForModel(model)
+	}
+	if lastErr == nil {
 		recordFinalRequestForApiKey(apiKeyReservation, nil, model, 0, 0, 0, false, http.StatusServiceUnavailable, "No available accounts")
 		h.sendOpenAIError(w, http.StatusServiceUnavailable, "server_error", "No available accounts")
 		return
 	}
-	recordFinalRequestForApiKey(apiKeyReservation, lastAccount, model, 0, 0, 0, false, http.StatusInternalServerError, lastErr.Error())
-	h.sendOpenAIError(w, http.StatusInternalServerError, "server_error", lastErr.Error())
+	status := proxyErrorStatus(lastErr)
+	setRetryAfterHeader(w, lastErr)
+	recordFinalRequestForApiKey(apiKeyReservation, lastAccount, model, 0, 0, 0, false, status, lastErr.Error())
+	h.sendOpenAIError(w, status, proxyErrorType(lastErr, "server_error"), lastErr.Error())
 }
 
 func sendResponsesSSE(w http.ResponseWriter, flusher http.Flusher, event string, data interface{}) {

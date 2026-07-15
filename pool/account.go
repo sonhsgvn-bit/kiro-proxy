@@ -130,7 +130,7 @@ func (p *AccountPool) nextAccountLocked(model string, excluded map[string]bool) 
 	if acc := p.findNextAvailableLocked(model, excluded, false); acc != nil {
 		return acc
 	}
-	return p.findEarliestCooldownLocked(model, excluded)
+	return nil
 }
 
 func (p *AccountPool) findNextAvailableLocked(model string, excluded map[string]bool, avoidLast bool) *config.Account {
@@ -175,45 +175,6 @@ func (p *AccountPool) findNextAvailableLocked(model string, excluded map[string]
 	return nil
 }
 
-func (p *AccountPool) findEarliestCooldownLocked(model string, excluded map[string]bool) *config.Account {
-	allowOverUsage := config.GetAllowOverUsage()
-	nowUnix := time.Now().Unix()
-	var best *config.Account
-	var earliest time.Time
-	seen := make(map[string]bool)
-	for i := range p.accounts {
-		acc := &p.accounts[i]
-		if seen[acc.ID] {
-			continue
-		}
-		seen[acc.ID] = true
-		if excluded != nil && excluded[acc.ID] {
-			continue
-		}
-		if model != "" && !p.accountHasModel(acc.ID, model) {
-			continue
-		}
-		if tokenUnavailableForSelection(acc, nowUnix) {
-			continue
-		}
-		if isOverUsageLimit(*acc) && !isUpstreamOverageEnabled(*acc) && !allowOverUsage {
-			continue
-		}
-		if cooldown, ok := p.cooldowns[acc.ID]; ok {
-			if best == nil || cooldown.Before(earliest) {
-				best = acc
-				earliest = cooldown
-			}
-		}
-	}
-	if best != nil {
-		p.lastSelected = best.ID
-		bestCopy := *best
-		return &bestCopy
-	}
-	return nil
-}
-
 func tokenUnavailableForSelection(acc *config.Account, nowUnix int64) bool {
 	if acc == nil || acc.ExpiresAt == 0 {
 		return false
@@ -238,9 +199,40 @@ func (p *AccountPool) GetByID(id string) *config.Account {
 
 func (p *AccountPool) RecordSuccess(id string) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	_, hadCooldown := p.cooldowns[id]
 	delete(p.cooldowns, id)
 	p.errorCounts[id] = 0
+	p.mu.Unlock()
+
+	if hadCooldown {
+		go func() {
+			_ = p.SaveCooldowns()
+		}()
+	}
+}
+
+func (p *AccountPool) RecordRateLimit(id string, retryAfter time.Duration) int {
+	if retryAfter <= 0 {
+		retryAfter = 30 * time.Second
+	}
+	if retryAfter < 5*time.Second {
+		retryAfter = 5 * time.Second
+	}
+	if retryAfter > 5*time.Minute {
+		retryAfter = 5 * time.Minute
+	}
+
+	p.mu.Lock()
+	p.errorCounts[id]++
+	count := p.errorCounts[id]
+	p.cooldowns[id] = time.Now().Add(retryAfter)
+	p.mu.Unlock()
+
+	go func() {
+		_ = p.SaveCooldowns()
+	}()
+
+	return count
 }
 
 func (p *AccountPool) RecordError(id string, isQuotaError bool) int {
@@ -407,6 +399,36 @@ func (p *AccountPool) AvailableCount() int {
 		count++
 	}
 	return count
+}
+
+func (p *AccountPool) NextCooldownDelayForModel(model string) time.Duration {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	now := time.Now()
+	var earliest time.Time
+	seen := make(map[string]bool)
+	for i := range p.accounts {
+		acc := &p.accounts[i]
+		if seen[acc.ID] {
+			continue
+		}
+		seen[acc.ID] = true
+		if model != "" && !p.accountHasModel(acc.ID, model) {
+			continue
+		}
+		cooldown, ok := p.cooldowns[acc.ID]
+		if !ok || !cooldown.After(now) {
+			continue
+		}
+		if earliest.IsZero() || cooldown.Before(earliest) {
+			earliest = cooldown
+		}
+	}
+	if earliest.IsZero() {
+		return 0
+	}
+	return earliest.Sub(now)
 }
 
 func (p *AccountPool) UpdateStats(id string, tokens int, credits float64) {

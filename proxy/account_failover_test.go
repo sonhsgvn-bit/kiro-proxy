@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"kiro-proxy/config"
 	"kiro-proxy/db"
@@ -17,6 +18,7 @@ func TestAccountFailureClassifiers(t *testing.T) {
 		msg  string
 	}{
 		{name: "quota", fn: isQuotaErrorMessage, msg: "HTTP 429: quota exhausted"},
+		{name: "rate limit", fn: isRateLimitErrorMessage, msg: "HTTP 429: ThrottlingException"},
 		{name: "overage", fn: isOverageErrorMessage, msg: "HTTP 402 from Kiro IDE: OVERAGE limit exceeded"},
 		{name: "suspension", fn: isSuspensionErrorMessage, msg: "Your User ID temporarily is suspended"},
 		{name: "profile", fn: isProfileUnavailableErrorMessage, msg: "no available Kiro profile"},
@@ -27,6 +29,21 @@ func TestAccountFailureClassifiers(t *testing.T) {
 		if !tc.fn(tc.msg) {
 			t.Fatalf("%s classifier did not match %q", tc.name, tc.msg)
 		}
+	}
+}
+
+func TestGeneric429IsRetriedAsRateLimit(t *testing.T) {
+	err := newKiroHTTPError(429, "Kiro Gateway", []byte(`{"code":"ThrottlingException"}`), "9")
+	if isQuotaErrorMessage(err.Error()) {
+		t.Fatalf("generic 429 must not be treated as exhausted monthly quota: %v", err)
+	}
+
+	plan := newRequestRetryPlan()
+	if !plan.canRetrySameAccount(err, 0, 1) {
+		t.Fatalf("expected transient 429 to retry the same account")
+	}
+	if !plan.rateLimited || plan.pendingRetryAfter != 9*time.Second {
+		t.Fatalf("expected retry hint to be captured, rateLimited=%v retryAfter=%s", plan.rateLimited, plan.pendingRetryAfter)
 	}
 }
 

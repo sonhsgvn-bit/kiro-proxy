@@ -388,8 +388,58 @@ func TestReturnedAccountsAreSnapshots(t *testing.T) {
 
 	p.cooldowns["acct"] = time.Now().Add(time.Minute)
 	cooldown := p.GetNext()
-	if cooldown == nil || cooldown.ID != "acct" {
-		t.Fatalf("expected cooled account fallback, got %#v", cooldown)
+	if cooldown != nil {
+		t.Fatalf("expected cooled account to remain unavailable, got %#v", cooldown)
+	}
+}
+
+func TestRecordRateLimitUsesShortCooldown(t *testing.T) {
+	p := newTestPool(config.Account{ID: "acct"})
+	before := time.Now().Add(29 * time.Second)
+	p.RecordRateLimit("acct", 0)
+	after := time.Now().Add(31 * time.Second)
+
+	p.mu.RLock()
+	cooldown := p.cooldowns["acct"]
+	p.mu.RUnlock()
+	if cooldown.Before(before) || cooldown.After(after) {
+		t.Fatalf("expected approximately 30-second cooldown, got %s", cooldown)
+	}
+	if got := p.GetNext(); got != nil {
+		t.Fatalf("expected rate-limited account to be unavailable, got %#v", got)
+	}
+}
+
+func TestRecordSuccessClearsCooldown(t *testing.T) {
+	p := newTestPool(config.Account{ID: "acct"})
+	p.cooldowns["acct"] = time.Now().Add(time.Hour)
+	p.errorCounts["acct"] = 4
+
+	p.RecordSuccess("acct")
+
+	p.mu.RLock()
+	_, hasCooldown := p.cooldowns["acct"]
+	errorCount := p.errorCounts["acct"]
+	p.mu.RUnlock()
+	if hasCooldown || errorCount != 0 {
+		t.Fatalf("expected success to clear cooldown and errors, cooldown=%v errors=%d", hasCooldown, errorCount)
+	}
+	if got := p.GetNext(); got == nil || got.ID != "acct" {
+		t.Fatalf("expected account to become available after success, got %#v", got)
+	}
+}
+
+func TestNextCooldownDelayForModel(t *testing.T) {
+	p := newTestPool(config.Account{ID: "acct"})
+	p.SetModelList("acct", []string{"claude-opus-4.8"})
+	p.cooldowns["acct"] = time.Now().Add(20 * time.Second)
+
+	delay := p.NextCooldownDelayForModel("claude-opus-4.8")
+	if delay < 19*time.Second || delay > 21*time.Second {
+		t.Fatalf("expected cooldown near 20s, got %s", delay)
+	}
+	if got := p.NextCooldownDelayForModel("claude-sonnet-4.6"); got != 0 {
+		t.Fatalf("expected no cooldown for unmatched model, got %s", got)
 	}
 }
 
