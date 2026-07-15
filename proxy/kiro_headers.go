@@ -56,8 +56,19 @@ func buildKiroHeaderValues(account *config.Account, host, apiName, sdkVersion, m
 }
 
 func applyKiroBaseHeaders(req *http.Request, account *config.Account, values kiroHeaderValues) {
-	if account != nil && account.AccessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+account.AccessToken)
+	if account != nil {
+		if account.IsApiKeyCredential() {
+			apiKey := account.KiroApiKey
+			if apiKey == "" {
+				apiKey = account.AccessToken
+			}
+			if apiKey != "" {
+				req.Header.Set("Authorization", "Bearer "+apiKey)
+				req.Header.Set("tokentype", "API_KEY")
+			}
+		} else if account.AccessToken != "" {
+			req.Header.Set("Authorization", "Bearer "+account.AccessToken)
+		}
 	}
 	//! Enterprise external IdP (Microsoft Entra / Okta) accounts present an
 	//! IdP-issued bearer; the Kiro gateway only accepts it when this header tells

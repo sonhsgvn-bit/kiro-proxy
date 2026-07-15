@@ -32,11 +32,13 @@ type Account struct {
 	RefreshToken  string `json:"refreshToken"`
 	ClientID      string `json:"clientId,omitempty"`
 	ClientSecret  string `json:"clientSecret,omitempty"`
+	KiroApiKey    string `json:"kiroApiKey,omitempty"`
 	AuthMethod    string `json:"authMethod"`
 	Provider      string `json:"provider,omitempty"`
 	Region        string `json:"region"`
 	StartUrl      string `json:"startUrl,omitempty"`
 	TokenEndpoint string `json:"tokenEndpoint,omitempty"`
+	IssuerURL     string `json:"issuerUrl,omitempty"`
 	Scopes        string `json:"scopes,omitempty"`
 	ExpiresAt     int64  `json:"expiresAt,omitempty"`
 	MachineId     string `json:"machineId,omitempty"`
@@ -82,6 +84,61 @@ type Account struct {
 	LastUsed     int64   `json:"lastUsed,omitempty"`
 	TotalTokens  int     `json:"totalTokens,omitempty"`
 	TotalCredits float64 `json:"totalCredits,omitempty"`
+}
+
+// IsApiKeyCredential reports whether the account uses a Kiro API key.
+// Legacy records may identify the credential through authMethod alone.
+func (a *Account) IsApiKeyCredential() bool {
+	if a == nil {
+		return false
+	}
+	if strings.TrimSpace(a.KiroApiKey) != "" {
+		return true
+	}
+	method := strings.ToLower(strings.TrimSpace(a.AuthMethod))
+	return method == "api_key" || method == "apikey"
+}
+
+func normalizeAccountCredential(account Account) (Account, bool) {
+	if !account.IsApiKeyCredential() {
+		return account, false
+	}
+
+	original := account
+	apiKey := strings.TrimSpace(account.KiroApiKey)
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(account.AccessToken)
+	}
+	account.KiroApiKey = apiKey
+	if apiKey != "" {
+		// Keep the legacy access-token field populated for callers and pool code
+		// that only know how to check whether an account has a usable token.
+		account.AccessToken = apiKey
+	}
+	account.AuthMethod = "api_key"
+	account.ExpiresAt = 0
+
+	return account, account != original
+}
+
+func normalizeAccounts(accounts []Account) bool {
+	changed := false
+	for i := range accounts {
+		normalized, accountChanged := normalizeAccountCredential(accounts[i])
+		if accountChanged {
+			accounts[i] = normalized
+			changed = true
+		}
+	}
+	return changed
+}
+
+func normalizeLoadedCredentials() error {
+	loaded, accounts := CredentialsSnapshot()
+	if !loaded || !normalizeAccounts(accounts) {
+		return nil
+	}
+	return ReplaceCredentials(true, accounts)
 }
 
 type PromptFilterRule struct {
@@ -212,6 +269,9 @@ func Init(path string) error {
 	if err := LoadCredentials(); err != nil {
 		return fmt.Errorf("load credentials: %w", err)
 	}
+	if err := normalizeLoadedCredentials(); err != nil {
+		return fmt.Errorf("normalize credentials: %w", err)
+	}
 
 	return nil
 }
@@ -240,6 +300,9 @@ func Load() error {
 		return err
 	}
 	cfg = &c
+	if normalizeAccounts(cfg.Accounts) {
+		return saveLocked()
+	}
 	return nil
 }
 
@@ -317,13 +380,16 @@ func GetDataDir() string {
 func GetAccounts() []Account {
 
 	if CredentialsLoaded() {
-		return GetCredentials()
+		accounts := GetCredentials()
+		normalizeAccounts(accounts)
+		return accounts
 	}
 
 	cfgLock.RLock()
 	defer cfgLock.RUnlock()
 	accounts := make([]Account, len(cfg.Accounts))
 	copy(accounts, cfg.Accounts)
+	normalizeAccounts(accounts)
 	return accounts
 }
 
@@ -340,6 +406,7 @@ func GetEnabledAccounts() []Account {
 }
 
 func AddAccount(account Account) error {
+	account, _ = normalizeAccountCredential(account)
 
 	if CredentialsLoaded() {
 		return AddCredential(account)
@@ -352,6 +419,7 @@ func AddAccount(account Account) error {
 }
 
 func UpdateAccount(id string, account Account) error {
+	account, _ = normalizeAccountCredential(account)
 
 	if CredentialsLoaded() {
 		return UpdateCredential(account)

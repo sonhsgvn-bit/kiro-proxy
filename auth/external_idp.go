@@ -70,6 +70,9 @@ func postExternalIdpToken(client *http.Client, tokenEndpoint string, form url.Va
 	if strings.TrimSpace(tokenEndpoint) == "" {
 		return "", "", 0, fmt.Errorf("external IdP token endpoint is empty")
 	}
+	if err := ValidateExternalIdpEndpoint(tokenEndpoint); err != nil {
+		return "", "", 0, fmt.Errorf("external IdP token endpoint rejected: %w", err)
+	}
 
 	req, err := http.NewRequest("POST", tokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {

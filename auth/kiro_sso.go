@@ -532,6 +532,14 @@ func validateExternalIdpEndpoint(rawURL string) error {
 	return fmt.Errorf("external IdP host %q is not allow-listed", host)
 }
 
+var externalIdpEndpointValidator = validateExternalIdpEndpoint
+
+// ValidateExternalIdpEndpoint validates a user- or discovery-supplied external
+// IdP endpoint before it is used for browser redirects or token requests.
+func ValidateExternalIdpEndpoint(rawURL string) error {
+	return externalIdpEndpointValidator(rawURL)
+}
+
 // oidcDiscover fetches the OpenID Connect discovery document for issuerURL and
 // returns its authorization and token endpoints. The issuer and BOTH discovered
 // endpoints are validated against the IdP host allow-list; redirects are NOT

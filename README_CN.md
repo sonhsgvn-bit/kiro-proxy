@@ -175,8 +175,8 @@
 ### 🐳 Docker Compose（推荐）
 
 ```bash
-git clone https://github.com/tanu360/kiro-reverse-api.git
-cd kiro-reverse-api
+git clone https://github.com/sonhsgvn-bit/kiro-proxy.git
+cd kiro-proxy
 docker-compose up -d
 ```
 
@@ -189,14 +189,26 @@ docker run -d \
   -e ADMIN_PASSWORD=your_secure_password \
   -v /path/to/kiro-proxy-state:/app/state \
   --restart unless-stopped \
-  ghcr.io/tanu360/kiro-reverse-api:latest
+  ghcr.io/sonhsgvn-bit/kiro-proxy:latest
 ```
+
+### ☁️ 使用 GitHub 构建镜像部署到 Coolify
+
+在 Coolify 中创建 **Docker Image** 资源并设置：
+
+- 镜像：`ghcr.io/sonhsgvn-bit/kiro-proxy:latest`
+- 容器端口：`8080`
+- 健康检查路径：`/health`
+- 持久化存储：挂载卷到 `/app/state`
+- 环境变量：`DATA_DIR=/app/state`、`ADMIN_PASSWORD=<strong-password>`、`KIRO_SSO_CALLBACK_BIND=0.0.0.0`
+
+每次推送到 `main` 都会发布 `latest`、分支标签和提交 SHA 标签，并同时构建 `linux/amd64` 与 `linux/arm64`。如果 GHCR 包是私有的，请在 Coolify 中配置具有 packages 读取权限的 GitHub Registry 凭据。
 
 ### 🛠 源码编译
 
 ```bash
-git clone https://github.com/tanu360/kiro-reverse-api.git
-cd kiro-reverse-api
+git clone https://github.com/sonhsgvn-bit/kiro-proxy.git
+cd kiro-proxy
 go build -o kiro-proxy .
 ./kiro-proxy
 ```

@@ -1,9 +1,122 @@
 package config
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 )
+
+func TestAccountIsApiKeyCredential(t *testing.T) {
+	var nilAccount *Account
+	if nilAccount.IsApiKeyCredential() {
+		t.Fatalf("expected nil account not to be an API-key credential")
+	}
+
+	tests := []struct {
+		name    string
+		account Account
+		want    bool
+	}{
+		{name: "kiro api key", account: Account{KiroApiKey: "key"}, want: true},
+		{name: "api key method", account: Account{AuthMethod: " API_KEY "}, want: true},
+		{name: "legacy apikey method", account: Account{AuthMethod: "ApiKey"}, want: true},
+		{name: "oauth", account: Account{AuthMethod: "social", AccessToken: "token"}, want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.account.IsApiKeyCredential(); got != test.want {
+				t.Fatalf("IsApiKeyCredential() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestLoadNormalizesLegacyAPIKeyAccounts(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "kiro.db")
+	if err := Init(dbPath); err != nil {
+		t.Fatalf("init config: %v", err)
+	}
+
+	rawConfig := `{"password":"changeme","port":8080,"host":"0.0.0.0","requireApiKey":false,"accounts":[{"id":"legacy","accessToken":" legacy-key ","authMethod":"APIKEY","expiresAt":123,"issuerUrl":"https://issuer.example.com","enabled":true}]}`
+	if err := setSetting("config", rawConfig); err != nil {
+		t.Fatalf("seed legacy config: %v", err)
+	}
+	if err := Load(); err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+
+	accounts := GetAccounts()
+	if len(accounts) != 1 {
+		t.Fatalf("expected one account, got %d", len(accounts))
+	}
+	got := accounts[0]
+	if got.KiroApiKey != "legacy-key" || got.AccessToken != "legacy-key" {
+		t.Fatalf("expected API key fields to be backfilled, got %#v", got)
+	}
+	if got.AuthMethod != "api_key" || got.ExpiresAt != 0 {
+		t.Fatalf("expected canonical API-key metadata, got %#v", got)
+	}
+	if got.IssuerURL != "https://issuer.example.com" {
+		t.Fatalf("expected issuer URL to survive loading, got %q", got.IssuerURL)
+	}
+
+	persistedRaw, ok, err := getSetting("config")
+	if err != nil || !ok {
+		t.Fatalf("read persisted config: ok=%v err=%v", ok, err)
+	}
+	var persisted Config
+	if err := json.Unmarshal([]byte(persistedRaw), &persisted); err != nil {
+		t.Fatalf("decode persisted config: %v", err)
+	}
+	if len(persisted.Accounts) != 1 || persisted.Accounts[0].KiroApiKey != "legacy-key" {
+		t.Fatalf("expected normalized account to be persisted, got %#v", persisted.Accounts)
+	}
+}
+
+func TestInitNormalizesCredentialsModeAPIKeyAccounts(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "kiro.db")
+	if err := Init(dbPath); err != nil {
+		t.Fatalf("init config: %v", err)
+	}
+	if err := ReplaceCredentials(true, []Account{{
+		ID:          "legacy-credential",
+		AccessToken: "legacy-credential-key",
+		AuthMethod:  "api_key",
+		ExpiresAt:   456,
+		Enabled:     true,
+	}}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+
+	if err := Init(dbPath); err != nil {
+		t.Fatalf("re-init config: %v", err)
+	}
+	loaded, credentials := CredentialsSnapshot()
+	if !loaded || len(credentials) != 1 {
+		t.Fatalf("unexpected credentials snapshot: loaded=%v credentials=%#v", loaded, credentials)
+	}
+	got := credentials[0]
+	if got.KiroApiKey != "legacy-credential-key" || got.AccessToken != "legacy-credential-key" {
+		t.Fatalf("expected credential API key fields to be backfilled, got %#v", got)
+	}
+	if got.AuthMethod != "api_key" || got.ExpiresAt != 0 {
+		t.Fatalf("expected canonical credential metadata, got %#v", got)
+	}
+
+	if err := AddAccount(Account{
+		ID:         "new-api-key",
+		KiroApiKey: "new-key",
+		AuthMethod: "social",
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("add API-key credential: %v", err)
+	}
+	_, credentials = CredentialsSnapshot()
+	if len(credentials) != 2 || credentials[1].AccessToken != "new-key" || credentials[1].AuthMethod != "api_key" {
+		t.Fatalf("expected added credential to be normalized, got %#v", credentials)
+	}
+}
 
 func TestUpdateSettingsPatchPreservesOmittedAuthFields(t *testing.T) {
 	if err := Init(filepath.Join(t.TempDir(), "kiro.db")); err != nil {

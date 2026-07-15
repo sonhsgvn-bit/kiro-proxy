@@ -175,8 +175,8 @@ If this project helps you, a Star would mean a lot.
 ### 🐳 Docker Compose (recommended)
 
 ```bash
-git clone https://github.com/tanu360/kiro-reverse-api.git
-cd kiro-reverse-api
+git clone https://github.com/sonhsgvn-bit/kiro-proxy.git
+cd kiro-proxy
 docker-compose up -d
 ```
 
@@ -189,14 +189,26 @@ docker run -d \
   -e ADMIN_PASSWORD=your_secure_password \
   -v /path/to/kiro-proxy-state:/app/state \
   --restart unless-stopped \
-  ghcr.io/tanu360/kiro-reverse-api:latest
+  ghcr.io/sonhsgvn-bit/kiro-proxy:latest
 ```
+
+### ☁️ Coolify using the GitHub-built image
+
+Create a **Docker Image** resource in Coolify with:
+
+- Image: `ghcr.io/sonhsgvn-bit/kiro-proxy:latest`
+- Container port: `8080`
+- Health check path: `/health`
+- Persistent storage: mount a volume at `/app/state`
+- Environment: `DATA_DIR=/app/state`, `ADMIN_PASSWORD=<strong-password>`, and `KIRO_SSO_CALLBACK_BIND=0.0.0.0`
+
+Every push to `main` publishes `latest`, a branch tag, and a commit-SHA tag for both `linux/amd64` and `linux/arm64`. If the GHCR package is private, configure GitHub registry credentials in Coolify with a token that can read packages.
 
 ### 🛠 Build from source
 
 ```bash
-git clone https://github.com/tanu360/kiro-reverse-api.git
-cd kiro-reverse-api
+git clone https://github.com/sonhsgvn-bit/kiro-proxy.git
+cd kiro-proxy
 go build -o kiro-proxy .
 ./kiro-proxy
 ```

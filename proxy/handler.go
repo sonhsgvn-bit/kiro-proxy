@@ -264,7 +264,7 @@ func (h *Handler) refreshAllAccounts() {
 			continue
 		}
 
-		if account.ExpiresAt > 0 && time.Now().Unix() > account.ExpiresAt-tokenRefreshSkewSeconds {
+		if !account.IsApiKeyCredential() && account.ExpiresAt > 0 && time.Now().Unix() > account.ExpiresAt-tokenRefreshSkewSeconds {
 			newAccessToken, newRefreshToken, newExpiresAt, profileArn, err := auth.RefreshToken(account)
 			if err != nil {
 				logger.Warnf("[BackgroundRefresh] Token refresh failed for %s: %v", account.Email, err)
@@ -2130,6 +2130,9 @@ func (h *Handler) sendOpenAIError(w http.ResponseWriter, status int, errType, me
 }
 
 func (h *Handler) ensureValidToken(account *config.Account) error {
+	if account.IsApiKeyCredential() {
+		return nil
+	}
 	if account.ExpiresAt == 0 || time.Now().Unix() < account.ExpiresAt-tokenRefreshSkewSeconds {
 		return nil
 	}
@@ -2206,6 +2209,12 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/test") && r.Method == "POST":
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/accounts/"), "/test")
 		h.apiTestAccount(w, r, id)
+	case strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/kiro-profiles") && r.Method == "GET":
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "/accounts/"), "/kiro-profiles")
+		h.apiListAccountKiroProfiles(w, r, id)
+	case strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/kiro-profiles") && r.Method == "POST":
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "/accounts/"), "/kiro-profiles")
+		h.apiSwitchAccountKiroProfile(w, r, id)
 	case strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/models/cached") && r.Method == "GET":
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/accounts/"), "/models/cached")
 		h.apiGetAccountModelsCached(w, r, id)
@@ -2243,6 +2252,8 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiPollKiroSso(w, r)
 	case path == "/auth/kiro-sso/cancel" && r.Method == "POST":
 		h.apiCancelKiroSso(w, r)
+	case path == "/auth/kiro-sso/select-profile" && r.Method == "POST":
+		h.apiSelectKiroSsoProfile(w, r)
 	case path == "/auth/sso-token" && r.Method == "POST":
 		h.apiImportSsoToken(w, r)
 	case path == "/auth/credentials" && r.Method == "POST":
@@ -2362,7 +2373,7 @@ func (h *Handler) apiGetAccounts(w http.ResponseWriter, _ *http.Request) {
 			"banReason":         a.BanReason,
 			"banTime":           a.BanTime,
 			"expiresAt":         a.ExpiresAt,
-			"hasToken":          a.AccessToken != "",
+			"hasToken":          a.AccessToken != "" || a.IsApiKeyCredential(),
 			"machineId":         a.MachineId,
 			"weight":            a.Weight,
 			"overageStatus":     a.OverageStatus,
@@ -2409,6 +2420,24 @@ func (h *Handler) apiAddAccount(w http.ResponseWriter, r *http.Request) {
 	if account.Region == "" {
 		account.Region = "us-east-1"
 	}
+	if account.IsApiKeyCredential() {
+		if strings.TrimSpace(account.KiroApiKey) == "" {
+			account.KiroApiKey = strings.TrimSpace(account.AccessToken)
+		}
+		if account.KiroApiKey == "" {
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": "kiroApiKey is required"})
+			return
+		}
+		account.AuthMethod = "api_key"
+		if account.Provider == "" {
+			account.Provider = "APIKey"
+		}
+		account.AccessToken = account.KiroApiKey
+		account.RefreshToken = ""
+		account.ExpiresAt = 0
+		account.ProfileArn = ""
+	}
 
 	if err := config.AddAccount(account); err != nil {
 		w.WriteHeader(500)
@@ -2418,7 +2447,7 @@ func (h *Handler) apiAddAccount(w http.ResponseWriter, r *http.Request) {
 
 	h.pool.Reload()
 
-	if account.Enabled && account.AccessToken != "" {
+	if account.Enabled && (account.AccessToken != "" || account.IsApiKeyCredential()) {
 		go func(acc config.Account) {
 			if err := h.fetchAndCacheAccountModels(&acc); err != nil {
 				logger.Warnf("[ModelsCache] Auto-refresh failed for new account %s: %v", acc.Email, err)
@@ -2827,6 +2856,7 @@ func (h *Handler) apiImportExternalIdp(w http.ResponseWriter, r *http.Request) {
 		RefreshToken  string `json:"refreshToken"`
 		ClientID      string `json:"clientId"`
 		TokenEndpoint string `json:"tokenEndpoint"`
+		IssuerURL     string `json:"issuerUrl"`
 		Scopes        string `json:"scopes"`
 		ExpiresAt     string `json:"expiresAt"`
 		Provider      string `json:"provider"`
@@ -2842,6 +2872,18 @@ func (h *Handler) apiImportExternalIdp(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(400)
 		json.NewEncoder(w).Encode(map[string]string{"error": "refreshToken, tokenEndpoint and clientId are required"})
 		return
+	}
+	if err := auth.ValidateExternalIdpEndpoint(req.TokenEndpoint); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid tokenEndpoint: " + err.Error()})
+		return
+	}
+	if req.IssuerURL != "" {
+		if err := auth.ValidateExternalIdpEndpoint(req.IssuerURL); err != nil {
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid issuerUrl: " + err.Error()})
+			return
+		}
 	}
 
 	accessToken := req.AccessToken
@@ -2888,6 +2930,7 @@ func (h *Handler) apiImportExternalIdp(w http.ResponseWriter, r *http.Request) {
 		RefreshToken:  req.RefreshToken,
 		ClientID:      req.ClientID,
 		TokenEndpoint: req.TokenEndpoint,
+		IssuerURL:     req.IssuerURL,
 		Scopes:        req.Scopes,
 		ProfileArn:    strings.TrimSpace(req.ProfileArn),
 		AuthMethod:    "external_idp",
@@ -3039,8 +3082,212 @@ func (h *Handler) apiCancelKiroSso(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req)
 	if req.SessionID != "" {
 		auth.CancelKiroSsoLogin(req.SessionID)
+		dropPendingKiroSsoChoice(req.SessionID)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+const kiroSsoChoiceTTL = 5 * time.Minute
+
+type pendingKiroSsoChoice struct {
+	result    *auth.KiroSsoResult
+	machineID string
+	profiles  []KiroProfile
+	expiresAt int64
+	deadline  time.Time
+	timer     *time.Timer
+}
+
+var (
+	pendingKiroSsoChoices   = make(map[string]*pendingKiroSsoChoice)
+	pendingKiroSsoChoicesMu sync.Mutex
+)
+
+func stashPendingKiroSsoChoice(sessionID string, pending *pendingKiroSsoChoice) {
+	pending.timer = time.AfterFunc(time.Until(pending.deadline), func() {
+		pendingKiroSsoChoicesMu.Lock()
+		if current, ok := pendingKiroSsoChoices[sessionID]; ok && current == pending {
+			delete(pendingKiroSsoChoices, sessionID)
+			logger.Debugf("[KiroSSO] Pending profile choice for session %s expired", sessionID)
+		}
+		pendingKiroSsoChoicesMu.Unlock()
+	})
+
+	pendingKiroSsoChoicesMu.Lock()
+	if previous, ok := pendingKiroSsoChoices[sessionID]; ok && previous.timer != nil {
+		previous.timer.Stop()
+	}
+	pendingKiroSsoChoices[sessionID] = pending
+	pendingKiroSsoChoicesMu.Unlock()
+}
+
+func takePendingKiroSsoChoice(sessionID string) *pendingKiroSsoChoice {
+	pendingKiroSsoChoicesMu.Lock()
+	defer pendingKiroSsoChoicesMu.Unlock()
+	pending, ok := pendingKiroSsoChoices[sessionID]
+	if !ok {
+		return nil
+	}
+	delete(pendingKiroSsoChoices, sessionID)
+	if pending.timer != nil {
+		pending.timer.Stop()
+	}
+	return pending
+}
+
+func dropPendingKiroSsoChoice(sessionID string) {
+	if pending := takePendingKiroSsoChoice(sessionID); pending != nil {
+		logger.Debugf("[KiroSSO] Dropped pending profile choice for session %s", sessionID)
+	}
+}
+
+func (h *Handler) apiSelectKiroSsoProfile(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID  string `json:"sessionId"`
+		ProfileArn string `json:"profileArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+	req.ProfileArn = strings.TrimSpace(req.ProfileArn)
+	if req.SessionID == "" || req.ProfileArn == "" {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "sessionId and profileArn are required"})
+		return
+	}
+
+	pending := takePendingKiroSsoChoice(req.SessionID)
+	if pending == nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "profile choice expired or already completed; sign in again"})
+		return
+	}
+
+	valid := false
+	for _, profile := range pending.profiles {
+		if profile.Arn == req.ProfileArn {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		stashPendingKiroSsoChoice(req.SessionID, pending)
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "profileArn is not one of the discovered profiles"})
+		return
+	}
+
+	pending.result.ProfileArn = req.ProfileArn
+	h.finalizeKiroSsoAccount(w, pending.result, pending.machineID, pending.expiresAt)
+}
+
+func (h *Handler) apiListAccountKiroProfiles(w http.ResponseWriter, _ *http.Request, id string) {
+	account, status, errMsg := h.lookupAccountForProfileOps(id)
+	if account == nil {
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
+		return
+	}
+
+	profiles, err := DiscoverKiroProfiles(account)
+	if err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"profiles": profiles,
+		"current":  strings.TrimSpace(account.ProfileArn),
+	})
+}
+
+func (h *Handler) apiSwitchAccountKiroProfile(w http.ResponseWriter, r *http.Request, id string) {
+	var req struct {
+		ProfileArn string `json:"profileArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+	req.ProfileArn = strings.TrimSpace(req.ProfileArn)
+	if req.ProfileArn == "" {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "profileArn is required"})
+		return
+	}
+
+	account, status, errMsg := h.lookupAccountForProfileOps(id)
+	if account == nil {
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
+		return
+	}
+
+	profiles, err := DiscoverKiroProfiles(account)
+	if err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	valid := false
+	for _, profile := range profiles {
+		if profile.Arn == req.ProfileArn {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "profileArn is not one of the discovered profiles"})
+		return
+	}
+
+	if err := config.UpdateAccountProfileArn(id, req.ProfileArn); err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	h.pool.Reload()
+
+	account.ProfileArn = req.ProfileArn
+	modelsRefreshed := true
+	if err := h.fetchAndCacheAccountModels(account); err != nil {
+		modelsRefreshed = false
+		logger.Warnf("[ProfileArn] Model refresh after profile switch failed for %s: %v", accountEmailForLog(account), err)
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":         true,
+		"profileArn":      req.ProfileArn,
+		"modelsRefreshed": modelsRefreshed,
+	})
+}
+
+func (h *Handler) lookupAccountForProfileOps(id string) (*config.Account, int, string) {
+	accounts := config.GetAccounts()
+	var account *config.Account
+	for i := range accounts {
+		if accounts[i].ID == id {
+			account = &accounts[i]
+			break
+		}
+	}
+	if account == nil {
+		return nil, 404, "Account not found"
+	}
+	if !strings.EqualFold(strings.TrimSpace(account.AuthMethod), "external_idp") {
+		return nil, 400, "profile switching is only supported for external_idp accounts"
+	}
+	if latest := h.pool.GetByID(id); latest != nil {
+		account.AccessToken = latest.AccessToken
+		account.RefreshToken = latest.RefreshToken
+		account.ExpiresAt = latest.ExpiresAt
+		account.ProfileArn = latest.ProfileArn
+	}
+	return account, 200, ""
 }
 
 // apiPollKiroSso reports the hosted-portal sign-in status. While the user is signing in it
@@ -3077,12 +3324,51 @@ func (h *Handler) apiPollKiroSso(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider := result.Provider
-	if provider == "" || provider == "ExternalIdp" {
-		provider = "Microsoft365"
+	machineID := config.GenerateMachineId()
+	tokenExpiresAt := time.Now().Unix() + int64(result.ExpiresIn)
+	if result.AuthMethod == "external_idp" && strings.TrimSpace(result.ProfileArn) == "" {
+		probe := &config.Account{
+			Email:       result.Email,
+			AccessToken: result.AccessToken,
+			AuthMethod:  result.AuthMethod,
+			Provider:    result.Provider,
+			Region:      result.Region,
+			MachineId:   machineID,
+		}
+		profiles, discoverErr := DiscoverKiroProfiles(probe)
+		if discoverErr != nil {
+			logger.Warnf("[KiroSSO] Profile discovery failed for %s, falling back to lazy resolution: %v", result.Email, discoverErr)
+		}
+		switch {
+		case len(profiles) == 1:
+			result.ProfileArn = profiles[0].Arn
+		case len(profiles) >= 2:
+			stashPendingKiroSsoChoice(req.SessionID, &pendingKiroSsoChoice{
+				result:    result,
+				machineID: machineID,
+				profiles:  profiles,
+				expiresAt: tokenExpiresAt,
+				deadline:  time.Now().Add(kiroSsoChoiceTTL),
+			})
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":   true,
+				"completed": true,
+				"status":    "choose_profile",
+				"profiles":  profiles,
+			})
+			return
+		}
 	}
 
-	account := config.Account{
+	h.finalizeKiroSsoAccount(w, result, machineID, tokenExpiresAt)
+}
+
+func buildKiroSsoAccount(result *auth.KiroSsoResult, machineID string, expiresAt int64) config.Account {
+	provider := result.Provider
+	if result.AuthMethod == "external_idp" && (provider == "" || provider == "ExternalIdp" || provider == "AzureAD") {
+		provider = "Microsoft365"
+	}
+	return config.Account{
 		ID:            auth.GenerateAccountID(),
 		Email:         result.Email,
 		AccessToken:   result.AccessToken,
@@ -3093,12 +3379,16 @@ func (h *Handler) apiPollKiroSso(w http.ResponseWriter, r *http.Request) {
 		Region:        result.Region,
 		ProfileArn:    result.ProfileArn,
 		TokenEndpoint: result.TokenEndpoint,
+		IssuerURL:     result.IssuerURL,
 		Scopes:        result.Scopes,
-		ExpiresAt:     time.Now().Unix() + int64(result.ExpiresIn),
+		ExpiresAt:     expiresAt,
 		Enabled:       true,
-		MachineId:     config.GenerateMachineId(),
+		MachineId:     machineID,
 	}
+}
 
+func (h *Handler) finalizeKiroSsoAccount(w http.ResponseWriter, result *auth.KiroSsoResult, machineID string, expiresAt int64) {
+	account := buildKiroSsoAccount(result, machineID, expiresAt)
 	if err := config.AddAccount(account); err != nil {
 		w.WriteHeader(500)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -3616,9 +3906,14 @@ func (h *Handler) apiGetAccountFull(w http.ResponseWriter, _ *http.Request, id s
 		"refreshToken":      account.RefreshToken,
 		"clientId":          account.ClientID,
 		"clientSecret":      account.ClientSecret,
+		"kiroApiKey":        account.KiroApiKey,
 		"authMethod":        account.AuthMethod,
 		"provider":          account.Provider,
 		"region":            account.Region,
+		"tokenEndpoint":     account.TokenEndpoint,
+		"issuerUrl":         account.IssuerURL,
+		"scopes":            account.Scopes,
+		"profileArn":        account.ProfileArn,
 		"expiresAt":         account.ExpiresAt,
 		"machineId":         account.MachineId,
 		"weight":            account.Weight,

@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
+	"io"
 	"kiro-proxy/config"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -222,6 +226,143 @@ func TestSetPayloadProfileArnForAccountPreservesExplicitPayloadArn(t *testing.T)
 	setPayloadProfileArnForAccount(payload, &config.Account{})
 	if payload.ProfileArn != "arn:aws:codewhisperer:profile/explicit" {
 		t.Fatalf("expected explicit payload profile ARN to be preserved, got %q", payload.ProfileArn)
+	}
+}
+
+func TestCallKiroAPISkipsProfileResolutionForAPIKeyCredential(t *testing.T) {
+	if err := config.Init(t.TempDir() + "/kiro.db"); err != nil {
+		t.Fatalf("init config: %v", err)
+	}
+	if err := config.UpdatePreferredEndpoint("kiro"); err != nil {
+		t.Fatalf("set preferred endpoint: %v", err)
+	}
+	if err := config.UpdateEndpointFallback(false); err != nil {
+		t.Fatalf("disable endpoint fallback: %v", err)
+	}
+
+	requestPayloads := make(chan KiroPayload, 1)
+	requestHeaders := make(chan http.Header, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload KiroPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode streaming payload: %v", err)
+		}
+		requestPayloads <- payload
+		requestHeaders <- r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	oldEndpoints := kiroEndpoints
+	kiroEndpoints = []kiroEndpoint{{
+		URL:    server.URL,
+		Origin: "AI_EDITOR",
+		Name:   "test",
+	}}
+	defer func() { kiroEndpoints = oldEndpoints }()
+
+	oldStreamClient := kiroHttpStore.Load()
+	kiroHttpStore.Store(&http.Client{Timeout: time.Second})
+	defer kiroHttpStore.Store(oldStreamClient)
+
+	profileLookups := make(chan struct{}, 1)
+	oldRestClient := kiroRestHttpStore.Load()
+	kiroRestHttpStore.Store(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		profileLookups <- struct{}{}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"profiles":[{"arn":"arn:aws:codewhisperer:profile/discovered"}]}`)),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})})
+	defer kiroRestHttpStore.Store(oldRestClient)
+
+	payload := &KiroPayload{}
+	payload.ConversationState.CurrentMessage.UserInputMessage.Content = "hello"
+
+	account := &config.Account{
+		ID:          "api-key-account",
+		AccessToken: "legacy-api-key",
+		AuthMethod:  "api_key",
+	}
+	if err := CallKiroAPI(account, payload, nil); err != nil {
+		t.Fatalf("CallKiroAPI returned an error: %v", err)
+	}
+
+	select {
+	case <-profileLookups:
+		t.Fatalf("expected API-key request to skip profile ARN resolution")
+	default:
+	}
+
+	var sentPayload KiroPayload
+	select {
+	case sentPayload = <-requestPayloads:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for streaming request")
+	}
+	if sentPayload.ProfileArn != "" {
+		t.Fatalf("expected API-key payload to omit resolved profile ARN, got %q", sentPayload.ProfileArn)
+	}
+
+	var headers http.Header
+	select {
+	case headers = <-requestHeaders:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for streaming headers")
+	}
+	if got := headers.Get("Authorization"); got != "Bearer legacy-api-key" {
+		t.Fatalf("expected legacy API key bearer header, got %q", got)
+	}
+	if got := headers.Get("tokentype"); got != "API_KEY" {
+		t.Fatalf("expected API_KEY token type header, got %q", got)
+	}
+}
+
+func TestCallKiroAPIRejectsOAuthRequestWhenProfileArnCannotResolve(t *testing.T) {
+	if err := config.Init(t.TempDir() + "/kiro.db"); err != nil {
+		t.Fatalf("init config: %v", err)
+	}
+
+	oldRestClient := kiroRestHttpStore.Load()
+	kiroRestHttpStore.Store(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"profiles":[]}`)),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})})
+	defer kiroRestHttpStore.Store(oldRestClient)
+
+	streamCalled := false
+	oldStreamClient := kiroHttpStore.Load()
+	kiroHttpStore.Store(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		streamCalled = true
+		return nil, fmt.Errorf("streaming request must not be sent without profileArn")
+	})})
+	defer kiroHttpStore.Store(oldStreamClient)
+
+	payload := &KiroPayload{}
+	payload.ConversationState.CurrentMessage.UserInputMessage.Content = "hello"
+	account := &config.Account{
+		ID:          "oauth-account",
+		Email:       "user@example.com",
+		AccessToken: "access-token",
+		AuthMethod:  "external_idp",
+		Region:      "us-east-1",
+	}
+
+	err := CallKiroAPI(account, payload, nil)
+	if err == nil || !strings.Contains(err.Error(), "profileArn") {
+		t.Fatalf("expected profileArn resolution error, got %v", err)
+	}
+	if streamCalled {
+		t.Fatalf("expected request to stop before the streaming endpoint")
+	}
+	if payload.ProfileArn != "" {
+		t.Fatalf("expected caller payload to remain unchanged, got %q", payload.ProfileArn)
 	}
 }
 

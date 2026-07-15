@@ -880,6 +880,8 @@
     if (normalized === 'idc') return t('auth.enterprise');
     if (normalized === 'social') return t('auth.social');
     if (normalized === 'builderid') return 'BuilderID';
+    if (normalized === 'api_key' || normalized === 'apikey') return t('auth.apikey');
+    if (normalized === 'external_idp' || normalized === 'azuread') return 'Microsoft 365';
     if (normalized === 'entra' || normalized === 'microsoft365') return 'Microsoft 365';
     if (normalized === 'github') return t('local.providerGithub');
     if (normalized === 'google') return t('local.providerGoogle');
@@ -977,7 +979,7 @@
       const overageBadge = renderOverageBadge(a);
       const banned = a.banStatus && a.banStatus !== 'ACTIVE';
       const idAttr = escapeAttr(a.id);
-      const displayEmail = getDisplayEmail(a.email, a.id);
+      const displayEmail = getDisplayEmail(a.nickname || a.email, a.id);
       const selectLabel = t('accounts.selectAccount', displayEmail);
 
       const refreshSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>';
@@ -1009,6 +1011,8 @@
           '<button class="btn btn-sm ' + (a.enabled ? 'btn-outline' : 'btn-primary') + '" data-action="toggle" data-id="' + idAttr + '" data-enabled="' + (!a.enabled) + '">' +
           escapeHtml(a.enabled ? t('accounts.disable') : t('accounts.enable')) +
           '</button>') +
+        (a.authMethod === 'external_idp' ?
+          '<button class="btn btn-sm btn-outline" data-action="switchProfile" data-id="' + idAttr + '">' + escapeHtml(t('kirosso.switchProfile')) + '</button>' : '') +
         '<button class="btn btn-sm btn-test" data-action="test" data-id="' + idAttr + '" id="test-' + idAttr + '"><i class="fa-solid fa-play" aria-hidden="true"></i><span>' + escapeHtml(t('accounts.test')) + '</span></button>' +
         '<button class="btn btn-sm btn-danger" data-action="delete" data-id="' + idAttr + '">' + escapeHtml(t('accounts.delete')) + '</button>' +
         '</div>' +
@@ -1035,6 +1039,54 @@
     }).join('');
     applyUsageBars(container);
     enhanceCustomSelects(container);
+  }
+  async function openSwitchProfileModal(id, btn) {
+    if (btn) btn.disabled = true;
+    let data = {};
+    try {
+      const res = await api('/accounts/' + encodeURIComponent(id) + '/kiro-profiles');
+      data = await res.json().catch(() => ({}));
+    } catch (_) { }
+    if (btn) btn.disabled = false;
+    if (!data.success) {
+      toastError(t('common.failed') + ': ' + localizedError(data.error));
+      return;
+    }
+    const profiles = data.profiles || [];
+    if (!profiles.some(profile => profile.arn !== (data.current || ''))) {
+      toastPrimary(t('kirosso.noAltProfiles'));
+      return;
+    }
+
+    const title = $('modalTitle');
+    const body = $('modalBody');
+    title.textContent = t('kirosso.switchProfileTitle');
+    body.innerHTML =
+      '<p class="help-block">' + escapeHtml(t('kirosso.switchProfileDesc')) + '</p>' +
+      '<div id="switchProfileList">' + kiroProfileListHtml(profiles, data.current || '') + '</div>' +
+      '<div class="modal-footer">' +
+      '<button class="btn btn-secondary" data-close-add="1" type="button">' + escapeHtml(t('common.cancel')) + '</button>' +
+      '<button class="btn btn-primary" id="switchProfileConfirmBtn" type="button">' + escapeHtml(t('kirosso.useProfile')) + '</button>' +
+      '</div>';
+    $('switchProfileConfirmBtn').addEventListener('click', async event => {
+      const confirmBtn = event.currentTarget;
+      const selected = body.querySelector('input[name="kiroProfilePick"]:checked');
+      if (!selected || confirmBtn.disabled) return;
+      confirmBtn.disabled = true;
+      const res = await api('/accounts/' + encodeURIComponent(id) + '/kiro-profiles', {
+        method: 'POST', body: JSON.stringify({ profileArn: selected.value })
+      }).catch(() => null);
+      const result = res ? await res.json().catch(() => ({})) : {};
+      if (result.success) {
+        closeModal();
+        loadAccounts();
+        toastPrimary(t('kirosso.switchSuccess'));
+      } else {
+        toastError(t('common.failed') + ': ' + localizedError(result.error));
+        confirmBtn.disabled = false;
+      }
+    });
+    openDialog('addModal');
   }
   async function refreshAccount(id, card) {
     if (card) card.classList.add('loading');
@@ -1074,8 +1126,21 @@
       const jsonPromise = api('/accounts/' + id + '/full').then(async res => {
         if (!res.ok) throw new Error(t('common.failed'));
         const a = await res.json();
-        const { clientId, clientSecret, accessToken, refreshToken } = a;
-        return JSON.stringify({ clientId, clientSecret, accessToken, refreshToken }, null, 2);
+        const fields = {
+          clientId: a.clientId,
+          clientSecret: a.clientSecret,
+          accessToken: a.accessToken,
+          refreshToken: a.refreshToken,
+          kiroApiKey: a.kiroApiKey,
+          authMethod: a.authMethod,
+          provider: a.provider,
+          region: a.region,
+          tokenEndpoint: a.tokenEndpoint,
+          issuerUrl: a.issuerUrl,
+          scopes: a.scopes,
+          profileArn: a.profileArn
+        };
+        return JSON.stringify(Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== '' && value != null)), null, 2);
       });
       await copyText(jsonPromise);
       flashCopySuccess(btn);
@@ -2379,7 +2444,8 @@
     local: 'fa-solid fa-folder-open',
     credentials: 'fa-solid fa-code',
     cookie: 'fa-solid fa-cookie-bite',
-    entra: 'fa-brands fa-microsoft'
+    entra: 'fa-brands fa-microsoft',
+    apikey: 'fa-solid fa-lock'
   };
   function methodCard(type, title, desc) {
     var icon = METHOD_ICONS[type] || 'fa-solid fa-circle-plus';
@@ -2404,6 +2470,7 @@
     else if (type === 'local') modalLocal(title, body);
     else if (type === 'credentials') modalCredentials(title, body);
     else if (type === 'cookie') modalCookie(title, body);
+    else if (type === 'apikey') modalApiKey(title, body);
     if (!modal.classList.contains('active')) openDialog('addModal');
     enhanceCustomSelects(body);
   }
@@ -2432,6 +2499,7 @@
       methodCard('local', t('modal.localTitle'), t('modal.localDesc')) +
       methodCard('credentials', t('modal.credentialsTitle'), t('modal.credentialsDesc')) +
       methodCard('cookie', t('modal.cookieTitle'), t('modal.cookieDesc')) +
+      methodCard('apikey', t('modal.apikeyTitle'), t('modal.apikeyDesc')) +
       '</div>' +
       '<div class="modal-footer"><button class="btn btn-secondary" data-close-add="1" type="button">' + escapeHtml(t('common.cancel')) + '</button></div>';
   }
@@ -2492,7 +2560,6 @@
       '<p class="help-block">' + escapeHtml(t('modal.entraDesc')) + '</p>' +
       '<div id="kiroSsoStep1">' +
       '<div class="message message-info"><p class="text-xs">' + escapeHtml(t('kirosso.hostNote')) + '</p></div>' +
-      '<div class="form-group mt-3"><label>' + escapeHtml(t('detail.region')) + '</label><input type="text" id="kiroSsoRegion" value="us-east-1" /></div>' +
       '<div class="modal-footer">' +
       '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
       '<button class="btn btn-primary" id="startKiroSsoBtn" type="button">' + escapeHtml(t('builderid.startLogin')) + '</button>' +
@@ -2509,12 +2576,59 @@
       '</div>' +
       '<p id="kiroSsoStatus" class="text-center text-sm mt-4 muted-text">' + escapeHtml(t('builderid.waiting')) + '</p>' +
       '<div class="modal-footer"><button class="btn btn-secondary" id="kiroSsoCancelBtn" type="button">' + escapeHtml(t('common.cancel')) + '</button></div>' +
+      '</div>' +
+      '<div id="kiroSsoStep3" class="hidden">' +
+      '<div class="message message-info"><p class="text-xs">' + escapeHtml(t('kirosso.chooseProfile')) + '</p></div>' +
+      '<div id="kiroSsoProfileList" class="mt-3"></div>' +
+      '<div class="modal-footer">' +
+      '<button class="btn btn-secondary" id="kiroSsoProfileCancelBtn" type="button">' + escapeHtml(t('common.cancel')) + '</button>' +
+      '<button class="btn btn-primary" id="kiroSsoProfileConfirmBtn" type="button">' + escapeHtml(t('kirosso.useProfile')) + '</button>' +
+      '</div>' +
       '</div>';
     $('startKiroSsoBtn').addEventListener('click', startKiroSsoLogin);
   }
+  function kiroProfileListHtml(profiles, current) {
+    const hasCurrent = !!current && profiles.some(profile => profile.arn === current);
+    return profiles.map((profile, index) => {
+      const isCurrent = !!current && profile.arn === current;
+      const checked = hasCurrent ? (isCurrent ? ' checked' : '') : (index === 0 ? ' checked' : '');
+      return '<label class="method-card" style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:8px">' +
+        '<input type="radio" name="kiroProfilePick" value="' + escapeAttr(profile.arn) + '"' + checked + ' />' +
+        '<span><span class="font-mono">' + escapeHtml(profile.region || '') + '</span>' +
+        (isCurrent ? ' <span class="badge badge-info">' + escapeHtml(t('kirosso.currentProfile')) + '</span>' : '') +
+        '<br/><span class="text-xs muted-text font-mono">' + escapeHtml(profile.arn) + '</span></span>' +
+        '</label>';
+    }).join('');
+  }
+  function showKiroSsoProfileChoice(profiles) {
+    $('kiroSsoStep2').classList.add('hidden');
+    $('kiroSsoStep3').classList.remove('hidden');
+    $('kiroSsoProfileList').innerHTML = kiroProfileListHtml(profiles, '');
+    $('kiroSsoProfileCancelBtn').addEventListener('click', cancelKiroSsoLogin);
+    $('kiroSsoProfileConfirmBtn').addEventListener('click', async event => {
+      const button = event.currentTarget;
+      const selected = document.querySelector('input[name="kiroProfilePick"]:checked');
+      if (!selected || button.disabled) return;
+      button.disabled = true;
+      const res = await api('/auth/kiro-sso/select-profile', {
+        method: 'POST',
+        body: JSON.stringify({ sessionId: kiroSsoSession, profileArn: selected.value })
+      }).catch(() => null);
+      const data = res ? await res.json().catch(() => ({})) : {};
+      if (data.success) {
+        kiroSsoSession = '';
+        closeModal(); loadAccounts(); loadStats();
+        toastPrimary(t('builderid.success') + ': ' + (data.account?.email || data.account?.id));
+        autoRefreshNewAccount(data.account?.id);
+      } else {
+        toastError(t('common.failed') + ': ' + localizedError(data.error));
+        button.disabled = false;
+        cancelKiroSsoLogin();
+      }
+    });
+  }
   async function startKiroSsoLogin() {
-    const region = $('kiroSsoRegion').value || 'us-east-1';
-    const res = await api('/auth/kiro-sso/start', { method: 'POST', body: JSON.stringify({ region }) });
+    const res = await api('/auth/kiro-sso/start', { method: 'POST', body: '{}' });
     const d = await res.json();
     if (d.sessionId && d.signInUrl) {
       kiroSsoSession = d.sessionId;
@@ -2536,7 +2650,10 @@
     kiroSsoPollTimer = setTimeout(async () => {
       const res = await api('/auth/kiro-sso/poll', { method: 'POST', body: JSON.stringify({ sessionId: kiroSsoSession }) });
       const d = await res.json();
-      if (d.completed) {
+      if (d.status === 'choose_profile') {
+        if (Array.isArray(d.profiles) && d.profiles.length) showKiroSsoProfileChoice(d.profiles);
+        else { toastError(t('common.failed')); cancelKiroSsoLogin(); }
+      } else if (d.completed) {
         // Session is already consumed server-side; clear it so closeModal() does
         // not fire a redundant cancel for an account that succeeded.
         kiroSsoSession = '';
@@ -2640,6 +2757,47 @@
       '<button class="btn btn-primary" id="importCredBtn" type="button">' + escapeHtml(t('common.add')) + '</button>' +
       '</div>';
     $('importCredBtn').addEventListener('click', importCredentials);
+  }
+  function modalApiKey(title, body) {
+    title.textContent = t('modal.apikeyTitle');
+    body.innerHTML =
+      '<p class="help-block">' + escapeHtml(t('modal.apikeyDesc')) + '</p>' +
+      '<div class="form-group"><label>' + escapeHtml(t('apikey.keyLabel')) + '</label>' +
+      '<input type="password" id="kiroApiKeyInput" placeholder="' + escapeAttr(t('apikey.keyPlaceholder')) + '" /></div>' +
+      '<div class="form-group"><label>' + escapeHtml(t('apikey.nicknameLabel')) + '</label>' +
+      '<input type="text" id="kiroApiKeyNickname" placeholder="' + escapeAttr(t('apikey.nicknamePlaceholder')) + '" /></div>' +
+      '<div class="form-group"><label>' + escapeHtml(t('detail.region')) + '</label>' +
+      '<input type="text" id="kiroApiKeyRegion" value="us-east-1" /></div>' +
+      '<div class="modal-footer">' +
+      '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
+      '<button class="btn btn-primary" id="addKiroApiKeyBtn" type="button">' + escapeHtml(t('common.add')) + '</button>' +
+      '</div>';
+    $('addKiroApiKeyBtn').addEventListener('click', addKiroApiKeyAccount);
+  }
+  async function addKiroApiKeyAccount() {
+    const key = $('kiroApiKeyInput').value.trim();
+    if (!key) {
+      toastWarning(t('apikey.keyRequired'));
+      return;
+    }
+    const res = await api('/accounts', {
+      method: 'POST',
+      body: JSON.stringify({
+        authMethod: 'api_key',
+        kiroApiKey: key,
+        nickname: $('kiroApiKeyNickname').value.trim(),
+        region: $('kiroApiKeyRegion').value.trim() || 'us-east-1',
+        enabled: true
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data.success) {
+      toastPrimary(t('apikey.success'));
+      closeModal();
+      loadAccounts();
+    } else {
+      toastError(t('common.failed') + ': ' + localizedError(data.error));
+    }
   }
   function modalCookie(title, body) {
     title.textContent = t('modal.cookieTitle');
@@ -3184,6 +3342,7 @@
       else if (action === 'detail') showDetail(id);
       else if (action === 'copyJSON') copyAccountJSON(id, btn);
       else if (action === 'toggle') toggleAccount(id, btn.dataset.enabled === 'true');
+      else if (action === 'switchProfile') openSwitchProfileModal(id, btn);
       else if (action === 'test') testAccount(id);
       else if (action === 'delete') deleteAccount(id);
     });

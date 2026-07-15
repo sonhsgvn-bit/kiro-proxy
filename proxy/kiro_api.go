@@ -21,12 +21,27 @@ const (
 	kiroGatewayMgmtBase = "https://management.us-east-1.kiro.dev"
 )
 
+func regionFromProfileArn(profileArn string) string {
+	parts := strings.Split(strings.TrimSpace(profileArn), ":")
+	if len(parts) < 4 {
+		return ""
+	}
+	return strings.TrimSpace(parts[3])
+}
+
 // managementBase returns the correct management/REST base URL for the account.
 func managementBase(account *config.Account) string {
 	if account != nil && account.AuthMethod == "external_idp" {
 		return kiroGatewayMgmtBase
 	}
 	return kiroRestAPIBase
+}
+
+func accountEmailForLog(account *config.Account) string {
+	if account == nil || strings.TrimSpace(account.Email) == "" {
+		return "<unknown>"
+	}
+	return account.Email
 }
 
 func GetUsageLimits(account *config.Account) (*UsageLimitsResponse, error) {
@@ -187,22 +202,33 @@ func isTransientProfileFetchError(err error) bool {
 }
 
 func listAvailableProfiles(account *config.Account) (string, error) {
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/ListAvailableProfiles", managementBase(account)), strings.NewReader(`{"maxResults":10}`))
+	arns, err := listAvailableProfileArns(account)
 	if err != nil {
 		return "", err
+	}
+	if len(arns) == 0 {
+		return "", fmt.Errorf("empty profile list")
+	}
+	return arns[0], nil
+}
+
+func listAvailableProfileArns(account *config.Account) ([]string, error) {
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/ListAvailableProfiles", managementBase(account)), strings.NewReader(`{"maxResults":10}`))
+	if err != nil {
+		return nil, err
 	}
 	setKiroHeaders(req, account)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := GetRestClientForProxy(ResolveAccountProxyURL(account)).Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
 	var result struct {
@@ -211,14 +237,70 @@ func listAvailableProfiles(account *config.Account) (string, error) {
 		} `json:"profiles"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+		return nil, err
 	}
+
+	arns := make([]string, 0, len(result.Profiles))
 	for _, profile := range result.Profiles {
 		if profileArn := strings.TrimSpace(profile.Arn); profileArn != "" {
-			return profileArn, nil
+			arns = append(arns, profileArn)
 		}
 	}
-	return "", fmt.Errorf("empty profile list")
+	return arns, nil
+}
+
+func listAvailableProfileArnsWithRetry(account *config.Account) ([]string, error) {
+	const maxAttempts = 3
+	backoff := 200 * time.Millisecond
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		arns, err := listAvailableProfileArns(account)
+		if err == nil {
+			return arns, nil
+		}
+		lastErr = err
+		if !isTransientProfileFetchError(err) || attempt == maxAttempts {
+			return nil, err
+		}
+		logger.Debugf("[ProfileArn] Profile discovery transient failure for %s (attempt %d/%d): %v",
+			accountEmailForLog(account), attempt, maxAttempts, err)
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+	return nil, lastErr
+}
+
+type KiroProfile struct {
+	Arn    string `json:"arn"`
+	Region string `json:"region"`
+}
+
+func DiscoverKiroProfiles(account *config.Account) ([]KiroProfile, error) {
+	arns, err := listAvailableProfileArnsWithRetry(account)
+	if err != nil {
+		return nil, err
+	}
+
+	fallbackRegion := ""
+	if account != nil {
+		fallbackRegion = strings.TrimSpace(account.Region)
+	}
+	profiles := make([]KiroProfile, 0, len(arns))
+	seen := make(map[string]bool, len(arns))
+	for _, arn := range arns {
+		arn = strings.TrimSpace(arn)
+		if arn == "" || seen[arn] {
+			continue
+		}
+		seen[arn] = true
+		region := regionFromProfileArn(arn)
+		if region == "" {
+			region = fallbackRegion
+		}
+		profiles = append(profiles, KiroProfile{Arn: arn, Region: region})
+	}
+	return profiles, nil
 }
 
 func withProfileArnQuery(rawURL string, account *config.Account) string {

@@ -29,6 +29,51 @@ func TestResolveProfileArnReturnsCachedValueWithoutRequest(t *testing.T) {
 	}
 }
 
+func TestRegionFromProfileArn(t *testing.T) {
+	got := regionFromProfileArn("arn:aws:codewhisperer:eu-central-1:123456789012:profile/test")
+	if got != "eu-central-1" {
+		t.Fatalf("expected profile region eu-central-1, got %q", got)
+	}
+	if got := regionFromProfileArn("not-an-arn"); got != "" {
+		t.Fatalf("expected malformed ARN to have no region, got %q", got)
+	}
+}
+
+func TestDiscoverKiroProfilesReturnsAllUniqueProfiles(t *testing.T) {
+	kiroRestHttpStore.Store(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Host != "management.us-east-1.kiro.dev" {
+				t.Fatalf("expected external IdP management gateway, got %q", req.URL.Host)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body: io.NopCloser(strings.NewReader(`{"profiles":[
+					{"arn":"arn:aws:codewhisperer:us-east-1:1:profile/us"},
+					{"arn":"arn:aws:codewhisperer:eu-central-1:1:profile/eu"},
+					{"arn":"arn:aws:codewhisperer:us-east-1:1:profile/us"}
+				]}`)),
+				Header: make(http.Header),
+			}, nil
+		}),
+	})
+	t.Cleanup(func() { InitKiroHttpClient("") })
+
+	profiles, err := DiscoverKiroProfiles(&config.Account{
+		AccessToken: "token",
+		AuthMethod:  "external_idp",
+		Region:      "us-east-1",
+	})
+	if err != nil {
+		t.Fatalf("DiscoverKiroProfiles: %v", err)
+	}
+	if len(profiles) != 2 {
+		t.Fatalf("expected 2 unique profiles, got %+v", profiles)
+	}
+	if profiles[0].Region != "us-east-1" || profiles[1].Region != "eu-central-1" {
+		t.Fatalf("unexpected profile regions: %+v", profiles)
+	}
+}
+
 func TestResolveProfileArnFetchesAndCachesProfile(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "kiro.db")
 	if err := config.Init(configPath); err != nil {

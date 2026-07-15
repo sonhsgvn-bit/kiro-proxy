@@ -2,9 +2,67 @@ package proxy
 
 import (
 	"kiro-proxy/config"
+	"net/http"
 	"strings"
 	"testing"
 )
+
+func TestApplyKiroBaseHeadersUsesAPIKeyCredential(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "https://q.us-east-1.amazonaws.com/generateAssistantResponse", nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	account := &config.Account{
+		AccessToken: "stale-access-token",
+		KiroApiKey:  "kiro-api-key",
+		AuthMethod:  "api_key",
+	}
+
+	applyKiroBaseHeaders(req, account, kiroHeaderValues{})
+
+	if got := req.Header.Get("Authorization"); got != "Bearer kiro-api-key" {
+		t.Fatalf("expected API key bearer authorization, got %q", got)
+	}
+	if got := req.Header.Get("TokenType"); got != "API_KEY" {
+		t.Fatalf("expected API_KEY token type, got %q", got)
+	}
+}
+
+func TestApplyKiroBaseHeadersSupportsLegacyAPIKeyAccessToken(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "https://q.us-east-1.amazonaws.com/generateAssistantResponse", nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	account := &config.Account{
+		AccessToken: "legacy-api-key",
+		AuthMethod:  "APIKEY",
+	}
+
+	applyKiroBaseHeaders(req, account, kiroHeaderValues{})
+
+	if got := req.Header.Get("Authorization"); got != "Bearer legacy-api-key" {
+		t.Fatalf("expected legacy API key bearer authorization, got %q", got)
+	}
+	if got := req.Header.Get("tokentype"); got != "API_KEY" {
+		t.Fatalf("expected API_KEY token type, got %q", got)
+	}
+}
+
+func TestApplyKiroBaseHeadersKeepsOAuthBehavior(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "https://q.us-east-1.amazonaws.com/generateAssistantResponse", nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+
+	applyKiroBaseHeaders(req, &config.Account{AccessToken: "oauth-token", AuthMethod: "social"}, kiroHeaderValues{})
+
+	if got := req.Header.Get("Authorization"); got != "Bearer oauth-token" {
+		t.Fatalf("expected OAuth bearer authorization, got %q", got)
+	}
+	if got := req.Header.Get("TokenType"); got != "" {
+		t.Fatalf("expected no token type for OAuth account, got %q", got)
+	}
+}
 
 func TestBuildStreamingHeaderValuesAlignsWithKiroIDEFormat(t *testing.T) {
 	account := &config.Account{MachineId: "machine-123"}
